@@ -251,6 +251,9 @@ PORT=8001 python3 -m evently.web   # events page on http://127.0.0.1:8001/
   commands.
 - `factory/dashboard.html`: reviewer chips show the model each reviewer runs
   on; cards show a merge commit, a quiet timer and an incomplete cost.
+  A summary strip shows the factory as a whole: requests by outcome, estimated
+  cost, time to merge, first-try merges, gate failures, which reviewers asked
+  for changes, time by station, and the run `./fx reset --keep` saved last.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 - `docs/presentation.html` and `docs/local-mode.md` are new.
