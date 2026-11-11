@@ -87,7 +87,9 @@ from, not something to point at a production repository as it is.
 ## The `fx` command
 
 `./fx` is one entry point for running and showing the factory. It wraps the
-factory's own scripts and adds no factory logic.
+factory's own scripts and adds no factory logic. It is one Python file with no
+dependencies. `./fx` lists the commands, and `./fx <command> --help` explains
+one. Its tests run with `python3 -m pytest factory/tests -q`.
 
 | Command | What it does |
 | --- | --- |
