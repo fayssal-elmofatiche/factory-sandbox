@@ -3,6 +3,7 @@ name = "evently"
 version = "0.1.0"
 description = "A small event-registration app used to demo a software factory"
 requires-python = ">=3.10"
+license = "GPL-3.0-only"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
