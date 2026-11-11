@@ -639,7 +639,9 @@ async function refreshDrawer() {
 
 async function openDrawer(id) {
   openJobId = id
-  openPath = null
+  // A waiting job opens on the file that says what it waits for.
+  const stage = jobs.find((j) => j.id === id)?.stage
+  openPath = stage === 'needs-human' ? 'decision.md' : stage === 'needs-info' ? 'intake.md' : null
   openText = undefined
   document.body.classList.add('open')
   try {
