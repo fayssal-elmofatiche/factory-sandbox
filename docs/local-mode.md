@@ -16,6 +16,9 @@ Works on macOS, Linux and Windows with WSL. You need:
 
 - git and Python 3.10 or later, with pytest and ruff
 - Claude Code 2.1.257 or later, on a plan that includes Fable (intake runs on it)
+- For issues that change the web page: the `agent-browser` CLI and `lsof`. The
+  builder and the UX and UI reviewers use them to look at the page. Start with
+  an issue that has no interface if you do not have them.
 
 ```bash
 git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
@@ -28,7 +31,7 @@ claude
 In Claude Code, type `/factory run`. To watch the jobs, open a second terminal:
 
 ```bash
-cd ~/factory-demo/factory && python3 -m http.server 8765
+cd ~/factory-demo/factory && python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
 Then open `http://localhost:8765/dashboard.html`.
@@ -94,7 +97,9 @@ machine, not part of the project.
   on it.
 - **ESCALATE** posts the decision on the issue and labels it
   `factory:needs-human`. To approve by hand, merge the branch into the base and
-  push; the next `factory/bin/job queue` moves the job to `merged`.
+  push; the next `factory/bin/job queue` moves the job to `merged`. This works
+  for a branch that has passed the gate, merged with a merge commit or a
+  fast-forward.
 - `merge_method` still applies: `merge` makes a merge commit, `squash` a single
   commit, and `rebase` fast-forwards the base to the synced branch.
 
