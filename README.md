@@ -88,6 +88,8 @@ The design choices that carry the weight:
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
   says what it may write, and a `PreToolUse` hook (`factory/bin/guard`) blocks
   the rest: other agents' files, `job.json`, pushes to the base, `gh pr merge`.
+  Claude Code runs that hook only in a folder you have trusted (the prompt it
+  shows the first time you open `claude` there); `./fx doctor` checks it.
 
 What this does not give you: a sandbox. Agents and the gate run on your
 machine, with your credentials, and a shell can be talked into a lot. The

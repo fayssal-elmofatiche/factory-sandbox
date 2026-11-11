@@ -74,6 +74,8 @@ The approver escalates to a human when one of these is a product decision.
 
 - `## Summary` comes right after the issue line: 3 to 5 short bullets a human
   can skim on the dashboard. The detail goes in the sections below it.
+- Don't put a port number in a criterion. Agents that open the page get their own port in
+  their prompt; write "on the port from your prompt".
 - Don't stop to ask. Intake already asked the author everything only they
   could answer. Make the remaining calls yourself and list them under
   Assumptions.

@@ -101,9 +101,17 @@ Agents that open pages get ports. With `n` the job number (`004` → 4), the
 builder gets `5100 + 10n`, `reviewer-ux` `5101 + 10n` and `reviewer-ui`
 `5102 + 10n` (`ports` in `config.json`).
 
-Name the builder `builder-<id>`. Resume it with `SendMessage` to that name
-when this session spawned it; otherwise spawn a new `builder` with that name.
-Start every message to it with `<header>` too.
+Name the builder `builder-<id>`: pass it as the agent's name where the Agent
+tool takes one, otherwise put it in the description and keep the agent id the
+tool returns. Resume it with `SendMessage` to that name or id when this
+session spawned it; otherwise spawn a new `builder`. Start every message to it
+with `<header>` too.
+
+An agent's reply is not its result; its file is. If an agent replies but its
+file is missing (the script says so, or `job sync` still shows `pending`),
+resume that agent once with `Your file <path> does not exist. Write it now,
+then reply with its first line.` If it is still missing after that, park the
+job.
 
 ## Advancing a job
 
@@ -123,9 +131,9 @@ decision:
 `factory/bin/job advance <id> build` and go to **build**.
 
 **build.** Spawn or resume `builder-<id>` with
-`<header> Build round <N>. Port: <port>.` plus what this round is for: the
-gate's `round-<N-1>/checks.md`, the reviews in `round-<N-1>/`, or
-`feedback-<k>.md`. When it returns, read `build.md`'s first line:
+`<header> Build round <N>. Port: <port>.` plus what this round is for: in
+round 1, `This is the first round: implement spec.md.`; later, the gate's
+`round-<N-1>/checks.md`, the reviews in `round-<N-1>/`, or `feedback-<k>.md`. When it returns, read `build.md`'s first line:
 
 - `STATUS: READY`: `factory/bin/job advance <id> gate`, then go to **gate**. If
   `advance` refuses (nothing pushed, no PR, a dirty tree), resume the builder
@@ -205,11 +213,14 @@ then moves the job to `merged`; stop any agents still running for it.
    start it at **intake**.
 3. Each time a job finishes, run `factory/bin/job queue` again and start its
    `resume` lines you aren't already running and its `new` lines.
+   On the local host a merge is pushed to `origin` only: the main checkout
+   is the user's and stays where it was. Never pull or switch it yourself.
 4. When nothing is queued or running, print `factory/bin/job summary <ids>`
    for the jobs this run touched, then list what waits on a human: jobs to
    decide (`./fx show <id>` shows one; `./fx approve <id>`, `./fx feedback
    <id>` or `./fx reject <id>` decides it, and so does telling you with
-   `/factory`) and questions waiting on authors.
+   `/factory`) and questions waiting on authors. If a job merged on the local
+   host, add: `git pull` in this folder shows the merged work.
 
 **Resuming.** State lives in files, so a new session picks up where a dead one
 stopped. For a `resume` job, run its stage's step again: `intake` and `spec`
@@ -308,6 +319,9 @@ new feature, ask.
   merge pushed to `origin`). The factory never deploys. With `auto_merge`
   false in `config.json` it never merges either: an approved job waits in
   `needs-human` for a person to merge it.
+- Claude Code runs the agents' hooks only in a folder whose trust prompt was
+  accepted; `./fx doctor` says whether this one is. In an untrusted folder the
+  guard below is silently off.
 - Each agent has a `PreToolUse` hook, `factory/bin/guard`, that blocks writes
   outside its own file (and, for the builder, its worktree), `factory/bin/job`,
   pushes to the base and `gh pr merge`. `.claude/settings.json` denies the
