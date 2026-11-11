@@ -100,12 +100,30 @@ factory's own scripts and adds no factory logic.
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
+| `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
 | `./fx baseline` | Marks the current state as a demo's starting point |
-| `./fx reset` | Puts a local demo sandbox back to that starting point |
+| `./fx reset` | Discards the work in a local sandbox and keeps your setup changes |
+| `./fx reset --setup` | Also discards the setup changes: back to how the sandbox was made |
 
 The factory itself runs inside a Claude Code session that you watch. `./fx run`
 opens that session and types the command; it does not run the factory
-unattended. `./fx reset` works only in a local sandbox, lists what it will
+unattended.
+
+### Trying a different setup
+
+A local sandbox is made for experiments. Change the setup, run, reset, and run
+again:
+
+```bash
+./fx config review.low sonnet   # or edit factory/config.json, .claude/ or AGENTS.md
+./fx run
+./fx reset --keep               # start again; this run's files go to factory/runs/
+```
+
+`./fx reset` treats two things differently. The work (jobs, branches, merged
+changes, the state of the issues) is discarded. The setup (`factory/config.json`,
+`factory/checks.sh`, `.claude/` and `AGENTS.md`) is kept and becomes part of
+the new starting point. It works only in a local sandbox, lists what it will
 delete and asks before it does.
 
 ## Running it on GitHub
