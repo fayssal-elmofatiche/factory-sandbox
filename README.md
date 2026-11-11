@@ -8,6 +8,11 @@ The factory is [ZazenCodes' Software Factory v2](https://github.com/zazencodes/z
 installed and tailored to a toy app called **evently**. This repo exists to show
 the factory doing real work on real issues, in public.
 
+**New here?** Open [docs/presentation.html](docs/presentation.html) in a browser.
+It walks through the idea in eleven slides, with a pipeline you can step
+through and simulators for the state machine, the gate and the review routing.
+It is a single file and works offline.
+
 ## What it does
 
 Label an issue `factory`, then run `/factory run` in Claude Code. Each issue
