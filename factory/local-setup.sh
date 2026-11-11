@@ -1,21 +1,39 @@
 #!/usr/bin/env bash
-# Create a fully local copy of this sandbox: no GitHub, issues in kata.
+# Create a fully local copy of this sandbox: no GitHub, no pull requests.
 #
-#   factory/local-setup.sh <target-dir> [kata-project-name]
+#   factory/local-setup.sh <target-dir> [--tracker files|kata] [--project <kata-project>]
 #
 # Makes <target-dir> (a working checkout) and <target-dir>.git (a bare
-# repository that plays the part of `origin`), switches the factory to
-# `"tracker": "kata"` and binds the checkout to a kata project.
+# repository that plays the part of `origin`), switches the factory to a local
+# tracker and adds three demo issues, the first one labeled `factory`.
+#
+#   files (default)  issues are Markdown files in factory/issues/; nothing to install
+#   kata             issues live in kata; needs `kata` on PATH
 set -euo pipefail
 
-[ $# -ge 1 ] || { echo "usage: factory/local-setup.sh <target-dir> [kata-project-name]" >&2; exit 2; }
-command -v kata >/dev/null || { echo "kata is not installed or not on PATH" >&2; exit 1; }
+usage() { echo "usage: factory/local-setup.sh <target-dir> [--tracker files|kata] [--project <kata-project>]" >&2; exit 2; }
+
+TARGET_ARG="" TRACKER="files" PROJECT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tracker) [ $# -ge 2 ] || usage; TRACKER="$2"; shift 2 ;;
+    --project) [ $# -ge 2 ] || usage; PROJECT="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    -*) usage ;;
+    *) [ -z "$TARGET_ARG" ] || usage; TARGET_ARG="$1"; shift ;;
+  esac
+done
+[ -n "$TARGET_ARG" ] || usage
+case "$TRACKER" in files|kata) ;; *) usage ;; esac
+if [ "$TRACKER" = kata ]; then
+  command -v kata >/dev/null || { echo "kata is not installed or not on PATH" >&2; exit 1; }
+fi
 
 SRC="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
-mkdir -p "$(dirname "$1")"
-TARGET="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+mkdir -p "$(dirname "$TARGET_ARG")"
+TARGET="$(cd "$(dirname "$TARGET_ARG")" && pwd)/$(basename "$TARGET_ARG")"
 ORIGIN="$TARGET.git"
-PROJECT="${2:-$(basename "$TARGET")}"
+PROJECT="${PROJECT:-$(basename "$TARGET")}"
 BASE="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['base_branch'])" "$SRC/factory/config.json")"
 
 [ ! -e "$TARGET" ] || { echo "$TARGET already exists" >&2; exit 1; }
@@ -25,41 +43,65 @@ git init --quiet --bare --initial-branch="$BASE" "$ORIGIN"
 git -C "$SRC" push --quiet "$ORIGIN" "HEAD:refs/heads/$BASE"
 git clone --quiet "$ORIGIN" "$TARGET"
 cd "$TARGET"
+# A commit needs an author; fall back to a local one on a machine with none set.
+git config user.name >/dev/null || git config user.name "${USER:-factory}"
+git config user.email >/dev/null || git config user.email "${USER:-factory}@localhost"
 
 # Switch the tracker without reformatting the file.
-python3 - <<'PY'
-import json, pathlib
+TRACKER="$TRACKER" python3 - <<'PY'
+import json, os, pathlib
+tracker = os.environ["TRACKER"]
 p = pathlib.Path("factory/config.json")
 s = p.read_text()
 if '"tracker"' not in s:
-    s = s.replace("{\n", '{\n  "tracker": "kata",\n', 1)
+    s = s.replace("{\n", '{\n  "tracker": "%s",\n' % tracker, 1)
 else:
-    cfg = json.loads(s)
-    s = s.replace(f'"tracker": "{cfg["tracker"]}"', '"tracker": "kata"', 1)
-assert json.loads(s)["tracker"] == "kata"
+    s = s.replace('"tracker": "%s"' % json.loads(s)["tracker"], '"tracker": "%s"' % tracker, 1)
+assert json.loads(s)["tracker"] == tracker
 p.write_text(s)
 PY
+git add factory/config.json
 
-# kata derives nothing useful from a remote that is a path and refuses to
-# parse one, so bind the project while the checkout has no remote.
-git remote remove origin
-kata init --project "$PROJECT" >/dev/null
-git remote add origin "$ORIGIN"
-git fetch --quiet origin
-git branch --quiet --set-upstream-to="origin/$BASE" "$BASE"
-git add factory/config.json .kata.toml .gitignore
-git commit --quiet -m "Run the factory in local mode (tracker: kata)"
+if [ "$TRACKER" = kata ]; then
+  # kata refuses to parse a remote that is a path, so bind the project while
+  # the checkout has no remote.
+  git remote remove origin
+  kata init --project "$PROJECT" >/dev/null
+  git remote add origin "$ORIGIN"
+  git fetch --quiet origin
+  git branch --quiet --set-upstream-to="origin/$BASE" "$BASE"
+  git add .kata.toml .gitignore
+fi
+git commit --quiet -m "Run the factory in local mode (tracker: $TRACKER)"
 git push --quiet origin "$BASE"
 
+# Demo issues: the first is labeled `factory`, so the first run has work to do.
+if [ "$TRACKER" = files ]; then
+  mkdir -p factory/issues
+  cp factory/demo-issues/*.md factory/issues/
+else
+  python3 - <<'PY'
+import pathlib, re, subprocess
+for path in sorted(pathlib.Path("factory/demo-issues").glob("*.md")):
+    head, _, body = path.read_text()[4:].partition("\n---\n")
+    meta = dict(re.findall(r"^(\w+):[ \t]*(.*)$", head, re.M))
+    out = subprocess.run(["kata", "create", meta["title"], "--body", body.strip(), "--agent"],
+                         check=True, capture_output=True, text=True).stdout
+    ref = re.search(r"OK create (\S+)", out).group(1)
+    for name in filter(None, (l.strip() for l in meta.get("labels", "").split(","))):
+        subprocess.run(["kata", "label", "add", ref, name, "-q"], check=True, capture_output=True)
+PY
+fi
+
 cat <<MSG
-Local sandbox ready.
+Local sandbox ready (tracker: $TRACKER).
   checkout: $TARGET
   origin:   $ORIGIN
-  kata:     project $PROJECT
+
+Issues:
+$(factory/bin/job issues | sed 's/^/  /')
 
 Next:
   cd $TARGET
-  kata create "Short imperative title" --body "What you want built."
-  kata label add <ref> factory
-  claude      # then: /factory run
+  claude        # then type: /factory run
 MSG
