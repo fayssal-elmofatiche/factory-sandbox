@@ -90,7 +90,7 @@ claude                        # in the repo root
 Watch progress on the dashboard:
 
 ```bash
-cd factory && python3 -m http.server 8765
+cd factory && python3 -m http.server 8765 --bind 127.0.0.1
 # open http://localhost:8765/dashboard.html
 ```
 

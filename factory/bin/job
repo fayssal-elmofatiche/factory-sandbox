@@ -177,8 +177,9 @@ def write_issue_file(issue):
 def all_issue_files():
     if not ISSUES.exists():
         return []
-    return [read_issue_file(p.stem) for p in sorted(ISSUES.glob("*.md"), key=lambda p: int(p.stem))
-            if p.stem.isdigit()]
+    # Other Markdown files in the folder (a README, notes) are not issues.
+    paths = [p for p in ISSUES.glob("*.md") if p.stem.isdigit()]
+    return [read_issue_file(p.stem) for p in sorted(paths, key=lambda p: int(p.stem))]
 
 
 _operator = None
@@ -518,19 +519,22 @@ def pr_state(job):
 
 def landed(job):
     """True once the job's work is on the base branch: the PR is merged on
-    GitHub, or in local mode the branch was merged into origin/<base>, by
-    `job merge` or by a person."""
+    GitHub, or in local mode `job merge` merged it, or a person merged a
+    commit the gate had passed.
+
+    Only a gated commit counts. A branch that merely pulled in the base (its
+    tip is then a commit of the base) has landed nothing."""
     if not LOCAL:
         return bool(job["pr"]) and pr_state(job) == "MERGED"
     if job.get("merged_sha"):
         return True
-    tip = run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{job['branch']}"], check=False).stdout.strip()
-    if not tip or tip == job.get("base_sha"):
-        return False  # no branch yet, or nothing built on it
+    gated = job.get("gated_sha")
+    if not gated:
+        return False  # nothing of this job has passed the gate yet
     run(["git", "fetch", "origin", BASE])
-    if run(["git", "merge-base", "--is-ancestor", tip, f"origin/{BASE}"], check=False).returncode != 0:
+    if run(["git", "merge-base", "--is-ancestor", gated, f"origin/{BASE}"], check=False).returncode != 0:
         return False
-    job["merged_sha"] = tip
+    job["merged_sha"] = gated
     return True
 
 
@@ -626,8 +630,6 @@ def advance(job, stage):
             run(["git", "fetch", "origin", BASE])
             Path(job["worktree"]).parent.mkdir(parents=True, exist_ok=True)
             run(["git", "worktree", "add", "-b", job["branch"], job["worktree"], f"origin/{BASE}"])
-            if LOCAL:  # lets `landed` tell a branch with work on it from a fresh one
-                job["base_sha"] = run(["git", "rev-parse", f"origin/{BASE}"]).stdout.strip()
 
     elif old == "needs-info":
         require_slot(job["id"])
@@ -671,6 +673,8 @@ def advance(job, stage):
         if stage == "review":
             require(h.get("GATE") == "PASS", "the gate didn't pass")
             job["reviews"] = {r: "pending" for r in reviewers(job)}
+            if LOCAL:  # the commit `landed` may accept as merged by hand
+                job["gated_sha"] = h.get("COMMIT")
         else:
             require(h.get("GATE") == "FAIL", "the gate passed")
             last = job["round"] >= job["round_limit"]

@@ -44,7 +44,7 @@ python3 -m pytest -q
 `/factory run` builds every open GitHub issue labeled `factory` through
 intake → spec → build → gate → review → approve, one PR per issue. State is in
 `factory/jobs/` (gitignored); `factory/bin/job` is its only writer. Checks:
-`factory/checks.sh`. Dashboard: `cd factory && python3 -m http.server`, then
+`factory/checks.sh`. Dashboard: `cd factory && python3 -m http.server --bind 127.0.0.1`, then
 open http://localhost:8000/dashboard.html.
 
 The factory also runs fully locally, with no GitHub: `factory/local-setup.sh
