@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""PreToolUse hook for the factory's agents: keep each one inside its job.
+
+Usage (from an agent's frontmatter): guard <role>
+  role is intake, spec-writer, builder, reviewer or approver.
+
+Reads the hook event on stdin and exits 2, with the reason on stderr, when the
+call is outside what the role may do:
+
+  Write, Edit   only the role's own file in factory/jobs/<job>/, plus, for the
+                builder, files inside .worktrees/
+  Bash          no factory/bin/job (the orchestrator moves state; the builder
+                may run `open-change`), no merging or closing pull requests,
+                no push to the base branch or forced push, no writing into
+                factory/jobs/ through the shell, and for every role except
+                the builder no command that changes the branch
+
+This is a seat belt, not a sandbox: a shell can be made to do almost anything.
+It stops the mistakes and the obvious detours. Run the factory in a container
+with a token scoped to one repository when the issues come from people you
+don't know.
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+BASE = json.loads((REPO / "factory" / "config.json").read_text())["base_branch"]
+
+OWN_FILE = {
+    "intake": r"factory/jobs/[^/]+/intake\.md",
+    "spec-writer": r"factory/jobs/[^/]+/spec\.md",
+    "builder": r"factory/jobs/[^/]+/build\.md",
+    "reviewer": r"factory/jobs/[^/]+/round-\d+/review-[a-z]+\.md",
+    "approver": r"factory/jobs/[^/]+/decision\.md",
+}
+
+ALWAYS = [
+    (r"\bgh\s+pr\s+(merge|close|ready|review)\b", "pull requests are merged, closed and marked ready by factory/bin/job"),
+    (r"\bgh\s+(issue|label|repo|release|secret|workflow|api)\b", "issues and labels are the factory's; agents don't call the tracker"),
+    (r"\bgit\s+push\b[^|;&]*(--force\b|--force-with-lease\b|\s-f\b|--delete\b|--mirror\b|--all\b)", "no forced, deleting or bulk pushes"),
+    (rf"\bgit\s+push\b[^|;&]*(\s|:)(refs/heads/)?{re.escape(BASE)}(\s|$)", f"agents never push to {BASE}; only factory/bin/job merge does"),
+    (r"(>|\btee\b|\bcp\b|\bmv\b|\brm\b|\bsed\s+-i|\btouch\b|\btruncate\b)[^|;&]*factory/(jobs|bin|config\.json|checks\.sh)",
+     "factory/jobs/ and the factory's own files are written with the Write tool or by the scripts, not through the shell"),
+    (r"job\.json[^|;&]*(>|\btee\b)|(>|\btee\b)[^|;&]*job\.json", "job.json has one writer: factory/bin/job"),
+]
+NOT_BUILDER = [
+    (r"\bgit\s+(commit|push|merge|rebase|reset|revert|cherry-pick|am|apply|stash|checkout|switch|restore|rm|mv|clean|tag|branch\s+-[dDmM])\b",
+     "only the builder changes the branch; you read it"),
+]
+JOB_SCRIPT = re.compile(r"factory/bin/(job|route)\b")
+
+
+def deny(why):
+    print(f"factory guard: blocked. {why}.", file=sys.stderr)
+    sys.exit(2)
+
+
+def main(argv):
+    role = argv[0] if argv else ""
+    if role not in OWN_FILE:
+        deny(f"unknown role {role!r} in the agent's hook")
+    event = json.load(sys.stdin)
+    tool, args = event.get("tool_name", ""), event.get("tool_input") or {}
+
+    if tool in {"Write", "Edit", "MultiEdit", "NotebookEdit"}:
+        raw = args.get("file_path") or args.get("notebook_path") or ""
+        path = Path(raw)
+        if not path.is_absolute():
+            path = Path(event.get("cwd") or REPO) / path
+        try:
+            rel = path.resolve().relative_to(REPO).as_posix()
+        except ValueError:
+            deny(f"{raw} is outside the repository")
+        if re.fullmatch(OWN_FILE[role], rel):
+            return
+        if role == "builder" and re.match(r"\.worktrees/[^/]+/", rel) and "/.git/" not in f"/{rel}/":
+            return
+        deny(f"a {role} writes only its own file in the job folder"
+             + (" and code inside the job's worktree" if role == "builder" else "") + f", not {rel}")
+
+    if tool == "Bash":
+        command = args.get("command") or ""
+        for m in JOB_SCRIPT.finditer(command):
+            rest = command[m.end():].lstrip()
+            if not (role == "builder" and m.group(1) == "job" and rest.startswith("open-change")):
+                deny("the orchestrator runs factory/bin/job and factory/bin/route; agents don't move job state")
+        for pattern, why in ALWAYS + ([] if role == "builder" else NOT_BUILDER):
+            if re.search(pattern, command):
+                deny(why)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

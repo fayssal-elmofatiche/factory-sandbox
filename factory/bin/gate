@@ -1,19 +1,31 @@
 #!/usr/bin/env python3
 """The deterministic gate: does the job's branch pass the repo's checks?
 
+Modified from ZazenCodes Software Factory v2 (GPLv3), November 2026: guarded
+paths and a timeout.
+
 Usage:
   gate <job-id>            write round-N/checks.md; exit 0 on PASS, 1 on FAIL
   gate <job-id> --merge    same, as round-N/merge-checks.md (job merge runs it)
   gate --hook              builder SubagentStop hook: run the checks once, exit 2 on failure
 
 The gate runs the main checkout's factory/checks.sh inside the job's worktree,
-so a branch can't change the checks it is judged by. It also fails when the
-branch modifies or deletes a file matching config.json `protected_paths`
-(fnmatch patterns, where `*` also matches `/`). Adding new files is fine.
+so a branch can't change the script it is judged by. It also fails when the
+branch touches one of two lists in config.json (fnmatch patterns, where `*`
+also matches `/`):
+
+  protected_paths   existing files the branch may not modify or delete.
+                    Adding new files is fine.
+  guarded_paths     files the branch may not add, modify or delete: the
+                    factory itself and the configuration the checks read
+                    (test runner and linter settings, conftest.py). A branch
+                    that could edit those could grade itself.
 """
 
 import fnmatch
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -24,6 +36,7 @@ FACTORY = REPO / "factory"
 CONFIG = json.loads((FACTORY / "config.json").read_text())
 CHECKS = FACTORY / "checks.sh"
 TAIL = 80
+TIMEOUT = CONFIG.get("gate_timeout_seconds", 1800)
 
 
 def die(msg):
@@ -38,24 +51,38 @@ def git(worktree, *args):
     return res.stdout
 
 
+def matches(path, patterns):
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
 def protected_changes(worktree):
-    """Existing files under protected_paths that the branch modified or deleted."""
+    """Changes the branch may not make: any change to a guarded path, and a
+    modification or deletion of a protected one."""
     diff = git(worktree, "diff", "--name-status", f"origin/{CONFIG['base_branch']}...HEAD")
     hits = []
     for line in diff.splitlines():
         status, *paths = line.split("\t")
-        if status.startswith("A"):
-            continue
-        old = paths[0]  # for renames and copies, the original path
-        if any(fnmatch.fnmatch(old, pattern) for pattern in CONFIG["protected_paths"]):
-            hits.append(f"{status[0]} {old}")
+        if any(matches(p, CONFIG.get("guarded_paths", [])) for p in paths):
+            hits.append(f"{status[0]} {paths[-1]}")
+        elif not status.startswith("A") and matches(paths[0], CONFIG["protected_paths"]):
+            hits.append(f"{status[0]} {paths[0]}")  # for renames and copies, the original path
     return hits
 
 
 def run_checks(worktree):
+    """Run checks.sh with a time limit. A run that hangs fails with exit 124."""
     start = time.monotonic()
-    res = subprocess.run(["bash", str(CHECKS)], cwd=worktree, capture_output=True, text=True)
-    return res.returncode, res.stdout + res.stderr, int(time.monotonic() - start)
+    proc = subprocess.Popen(["bash", str(CHECKS)], cwd=worktree, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=TIMEOUT)
+        code = proc.returncode
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        out, _ = proc.communicate()
+        out += f"\nfactory/checks.sh did not finish in {TIMEOUT}s (gate_timeout_seconds in config.json); stopped.\n"
+        code = 124
+    return code, out, int(time.monotonic() - start)
 
 
 def gate(job_id, merge):
@@ -73,14 +100,16 @@ def gate(job_id, merge):
     tail = "\n".join(log.rstrip().splitlines()[-TAIL:])
     summary = [
         f"checks.sh {'passed' if code == 0 else f'failed with exit {code}'} in {seconds}s",
-        f"Protected paths: {'changed: ' + ', '.join(protected) if protected else 'none changed'}",
+        f"Protected and guarded paths: {'changed: ' + ', '.join(protected) if protected else 'none changed'}",
         f"Commit {commit[:7]}" + (", synced with the latest main before merging" if merge else ""),
     ]
     (round_dir / f"{name}.md").write_text(
         f"GATE: {verdict}\nCOMMIT: {commit}\n\n"
         "## Summary\n" + "\n".join(f"- {s}" for s in summary) + "\n\n"
         "## Protected paths\n"
-        + ("\n".join(f"- {p}" for p in protected) if protected else "None changed.")
+        + ("\n".join(f"- {p}" for p in protected)
+           + "\n\nA job may not change these. If the spec can't be met without them, the builder writes "
+             "STATUS: BLOCKED and a person decides." if protected else "None changed.")
         + f"\n\n## checks.sh\nExit {code} in {seconds}s. Last {TAIL} lines of {name}.log:\n\n```\n{tail}\n```\n"
     )
     print(f"GATE: {verdict} ({job_id} round {job['round']}, checks.sh exit {code} in {seconds}s"

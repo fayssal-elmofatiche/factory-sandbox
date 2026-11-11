@@ -39,7 +39,8 @@ BASE="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['base_br
 [ ! -e "$TARGET" ] || { echo "$TARGET already exists" >&2; exit 1; }
 [ ! -e "$ORIGIN" ] || { echo "$ORIGIN already exists" >&2; exit 1; }
 
-git init --quiet --bare --initial-branch="$BASE" "$ORIGIN"
+git init --quiet --bare "$ORIGIN"
+git -C "$ORIGIN" symbolic-ref HEAD "refs/heads/$BASE"
 git -C "$SRC" push --quiet "$ORIGIN" "HEAD:refs/heads/$BASE"
 git clone --quiet "$ORIGIN" "$TARGET"
 cd "$TARGET"
