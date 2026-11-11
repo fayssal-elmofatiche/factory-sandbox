@@ -47,6 +47,11 @@ intake → spec → build → gate → review → approve, one PR per issue. Sta
 `factory/checks.sh`. Dashboard: `cd factory && python3 -m http.server`, then
 open http://localhost:8000/dashboard.html.
 
+The factory also runs fully locally, with no GitHub: `factory/local-setup.sh
+<dir>` creates a copy whose issues are Markdown files in `factory/issues/`
+(gitignored) and whose `origin` is a repository on disk. See
+`docs/local-mode.md`.
+
 Each job works in its own git worktree, a full checkout of the repo at
 `.worktrees/<job-id>` (gitignored). A tool run from the repo root that doesn't
 read `.gitignore` sees those copies too; exclude `.worktrees/` in its config.

@@ -8,6 +8,11 @@ The factory is [ZazenCodes' Software Factory v2](https://github.com/zazencodes/z
 installed and tailored to a toy app called **evently**. This repo exists to show
 the factory doing real work on real issues, in public.
 
+**New here?** Open [docs/presentation.html](docs/presentation.html) in a browser.
+It walks through the idea in eleven slides, with a pipeline you can step
+through and simulators for the state machine, the gate and the review routing.
+It is a single file and works offline.
+
 ## What it does
 
 Label an issue `factory`, then run `/factory run` in Claude Code. Each issue
@@ -92,12 +97,30 @@ Job state, specs, reviews and decisions are written to `factory/jobs/<job-id>/`
 (gitignored). Configuration is in `factory/config.json`, and the checks the gate
 runs are in `factory/checks.sh`.
 
+## Running it without GitHub
+
+The factory also runs fully locally, with nothing to sign in to except Claude:
+issues are Markdown files, there are no pull requests, and `origin` is a folder
+on disk. It works on macOS, Linux and Windows with WSL.
+
+```bash
+factory/local-setup.sh ~/factory-demo
+cd ~/factory-demo && claude        # then type: /factory run
+```
+
+The setup adds three demo issues, one of them queued. See
+[docs/local-mode.md](docs/local-mode.md) for the prerequisites, the WSL steps
+and what changes in the pipeline.
+
 ## What was changed from upstream
 
 - Agents in `.claude/agents/` are tailored to evently: what the app is for,
   its security rules (escape HTML, treat emails as personal data, bind to
   localhost) and its style tokens.
 - `factory/checks.sh` runs ruff and pytest.
+- Local mode: `factory/bin/job` gains a `tracker` switch (`github`, `files`,
+  `kata`) and the commands `answer`, `new-issue`, `issues`, `label` and `unlabel`; the skill, the builder and the approver each gain a
+  short note. With the default tracker the factory behaves as upstream does.
 - `factory/config.json`: a price entry for `claude-fable-5-2`.
 
 ## Licence
