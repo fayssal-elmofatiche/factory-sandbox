@@ -107,19 +107,23 @@
   .links a:hover { text-decoration: underline; }
   .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
   .meta .risk-high { color: var(--human); } .meta .risk-medium { color: var(--changes); }
-  .chip.gate { flex: 0 0 38px; }
   .chip.FAIL { border: 1px solid transparent; color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
   .branch {
     font-family: var(--mono); font-size: 11px; color: var(--faint);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .rounds { margin-top: 10px; display: grid; gap: 5px; }
-  .round { display: flex; align-items: center; gap: 4px; }
-  .round .r { font-family: var(--mono); font-size: 10px; color: var(--faint); width: 20px; }
+  .round { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px; align-items: start; }
+  .round .r { font-family: var(--mono); font-size: 10px; color: var(--faint); padding-top: 4px; }
+  /* Chips sit in equal columns and wrap in step, so a job with four reviewers stays tidy. */
+  .round .cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; }
   .chip {
-    flex: 1; text-align: center; font-family: var(--mono); font-size: 10px;
-    padding: 2px 0; border-radius: 4px; border: 1px dashed var(--faint); color: var(--faint);
+    display: flex; flex-direction: column; justify-content: center;
+    text-align: center; font-family: var(--mono); font-size: 10px; line-height: 1.25;
+    padding: 2px 4px; border-radius: 4px; border: 1px dashed var(--faint); color: var(--faint);
   }
+  /* The model a reviewer runs on, under its name. */
+  .chip small { font-size: 9px; opacity: .72; }
   .chip.wait { animation: breathe 1.6s ease-in-out infinite; }
   .chip.PASS {
     border: 1px solid transparent; color: var(--pass);
@@ -342,9 +346,10 @@ async function roundVerdicts(job, n) {
   return v
 }
 
-function chip(label, v, waiting, title, extra = '') {
+function chip(label, v, waiting, title, extra = '', model = '') {
   const cls = ['PASS', 'CHANGES', 'FAIL'].includes(v) ? v : v === 'pending' ? (waiting ? 'wait' : '') : 'bad'
-  return `<span class="chip ${extra} ${cls}" title="${esc(title)}: ${esc(v)}">${esc(label)}</span>`
+  const on = model ? ` (${esc(model)})` : ''
+  return `<span class="chip ${extra} ${cls}" title="${esc(title)}${on}: ${esc(v)}">${esc(label)}${model ? `<small>${esc(model)}</small>` : ''}</span>`
 }
 
 function roundRow(job, n, v) {
@@ -352,10 +357,10 @@ function roundRow(job, n, v) {
   const cells = [chip('gate', v.gate, current && job.stage === 'gate', 'gate', 'gate')]
   if (v.gate === 'PASS') {
     for (const r of Object.keys(job.agents.reviewers)) {
-      cells.push(chip(SHORT[r] || r, v.reviews[r], current && job.stage === 'review', r))
+      cells.push(chip(SHORT[r] || r, v.reviews[r], current && job.stage === 'review', r, '', job.agents.reviewers[r] || ''))
     }
   }
-  return `<div class="round"><span class="r">R${n}</span>${cells.join('')}</div>`
+  return `<div class="round"><span class="r">R${n}</span><span class="cells">${cells.join('')}</span></div>`
 }
 
 function elapsed(job) {

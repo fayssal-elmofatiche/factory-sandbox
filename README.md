@@ -121,6 +121,7 @@ and what changes in the pipeline.
 - Local mode: `factory/bin/job` gains a `tracker` switch (`github`, `files`,
   `kata`) and the commands `answer`, `new-issue`, `issues`, `label` and `unlabel`; the skill, the builder and the approver each gain a
   short note. With the default tracker the factory behaves as upstream does.
+- `factory/dashboard.html`: reviewer chips show the model each reviewer runs on.
 - `factory/config.json`: a price entry for `claude-fable-5-2`.
 
 ## Licence
