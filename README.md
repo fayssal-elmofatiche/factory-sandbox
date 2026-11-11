@@ -92,12 +92,26 @@ Job state, specs, reviews and decisions are written to `factory/jobs/<job-id>/`
 (gitignored). Configuration is in `factory/config.json`, and the checks the gate
 runs are in `factory/checks.sh`.
 
+## Running it without GitHub
+
+The factory also runs fully locally: issues in kata (a local issue tracker), no
+pull requests, and an `origin` on disk. One command sets it up:
+
+```bash
+factory/local-setup.sh ~/dev/factory-sandbox-local
+```
+
+See [docs/local-mode.md](docs/local-mode.md) for what changes and what you give up.
+
 ## What was changed from upstream
 
 - Agents in `.claude/agents/` are tailored to evently: what the app is for,
   its security rules (escape HTML, treat emails as personal data, bind to
   localhost) and its style tokens.
 - `factory/checks.sh` runs ruff and pytest.
+- Local mode: `factory/bin/job` gains a `tracker` switch and the commands
+  `answer` and `new-issue`; the skill, the builder and the approver each gain a
+  short note. With the default tracker the factory behaves as upstream does.
 - `factory/config.json`: a price entry for `claude-fable-5-2`.
 
 ## Licence
