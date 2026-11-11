@@ -257,9 +257,9 @@
     background: var(--card);
   }
   .summary:empty { display: none; }
-  .stat .k { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+  .stat .k { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .stat b { display: block; font-size: 22px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
-  .stat .d { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .stat .d { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .summary .row {
     grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 18px; padding-top: 10px;
     border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--muted);
@@ -472,7 +472,10 @@ let previous = { at: 0, value: null }
 async function stageTimes(job) {
   if (stageCache.has(job.id)) return stageCache.get(job.id)
   let text
-  try { text = await fetchText(`jobs/${job.id}/events.jsonl`) } catch { return null }
+  try { text = await fetchText(`jobs/${job.id}/events.jsonl`) } catch {
+    stageCache.set(job.id, null) // a job from before the event log existed: don't ask again
+    return null
+  }
   const out = {}
   let prev = new Date(job.started)
   for (const line of text.split('\n')) {
