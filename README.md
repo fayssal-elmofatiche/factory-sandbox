@@ -9,9 +9,10 @@ installed and tailored to a toy app called **evently**. This repo exists to show
 the factory doing real work on real issues, in public.
 
 **New here?** Open [docs/presentation.html](docs/presentation.html) in a browser.
-It walks through the idea in eleven slides, with a pipeline you can step
-through and simulators for the state machine, the gate and the review routing.
-It is a single file and works offline.
+It is a talk on one living diagram: the factory drawn as a control-room board
+that the camera moves around, with a job travelling the line as you press the
+arrow key. You can trip the gate, try illegal moves on the state machine and
+switch reviewers in and out. It is a single file and works offline.
 
 ## What it does
 
