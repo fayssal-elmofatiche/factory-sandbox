@@ -98,7 +98,7 @@ runs are in `factory/checks.sh`.
   its security rules (escape HTML, treat emails as personal data, bind to
   localhost) and its style tokens.
 - `factory/checks.sh` runs ruff and pytest.
-- `factory/config.json`: concurrency 2, and a price entry for `claude-fable-5-2`.
+- `factory/config.json`: a price entry for `claude-fable-5-2`.
 
 ## Licence
 
