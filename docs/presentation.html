@@ -196,7 +196,7 @@ const breaker = (id, x, y, label) => `<g class="station" data-st="${id}" id="st-
 const ring = (id, x, y, r = 118) => `<circle class="ring" id="ring-${id}" cx="${x}" cy="${y}" r="${r}"/>`
 const tag = (i, x, y, name) => `<g class="tag" id="tag-${i}"><line x1="${x}" y1="${y + 52}" x2="${x}" y2="${y + 84}"/><rect x="${x - 122}" y="${y}" width="244" height="52" rx="5"/><text x="${x}" y="${y + 34}">${name}</text></g>`
 
-const ERAS = [['1968', 'THE TERM'], ['1970s', 'JAPAN'], ['2000s', 'REUSE'], ['2010s', 'CI/CD'], ['NOW', 'AGENTS']]
+const ERAS = [['1968', 'THE IDEA'], ['1969', 'FACTORIES'], ['2004', 'REUSE'], ['2010s', 'CI/CD'], ['NOW', 'AGENTS']]
 const ALARMS = ['ISSUE UNCLEAR', 'OUT OF SCOPE', 'BUILDER BLOCKED', 'ROUNDS USED UP', 'APPROVER ESCALATES', 'MERGE NOT CLEAN']
 const petals = [[-135, 'WRITES'], [-45, 'TESTS'], [45, 'REVIEWS'], [135, 'APPROVES']].map(([a, t]) => {
   const p = (deg, r) => [2000 + r * Math.cos(deg * Math.PI / 180), 400 + r * Math.sin(deg * Math.PI / 180)].map(Math.round)
@@ -373,11 +373,15 @@ const STATIONS = [
   { id: 'Merge', kind: 'a script', does: 'Syncs with main, runs the gate once more, merges and closes the issue.', reads: '<code>decision.md</code>', writes: 'the merge' },
 ]
 const HISTORY = [
-  ['1968', 'The idea is older than it looks', 'Bob Bemer at General Electric described a software factory: a computer-controlled programming environment with standard tools, and records kept for management and measurement.'],
-  ['1970s and 1980s', 'Japan built them', 'Hitachi opened its Software Works in 1969, and Toshiba, NEC and Fujitsu followed. They ran software like manufacturing, with standard processes and reusable parts.'],
-  ['2000s', 'Reuse through patterns and models', 'The focus moved to patterns, models and frameworks for building families of similar applications. Microsoft published its approach under the same name in 2004.'],
-  ['2010s', 'The pipeline became automatic', 'Continuous integration and delivery automated the deterministic steps: build, test and deploy. GitHub Actions and similar tools made that normal.'],
-  ['Now', 'Agents do the work in between', 'Agents now do the unstructured thinking between those deterministic steps, including writing the code. The basic loop is a trigger, an agent, a proposed change and a merge.'],
+  ['1968', 'The idea is older than it looks', 'R. W. Bemer suggested that General Electric build a software factory: standard tools, a computer-based interface and a database of historical data for management control. Around the same time, M. D. McIlroy at AT&T proposed building programs from reusable components.',
+    'Aaen, Bøtcher and Mathiassen, "The Software Factory: Contributions and Illusions" (1997), after Cusumano (1989).'],
+  ['1969 to 1977', 'Companies built them', 'Hitachi was the first company to call a software organisation a factory, in 1969. System Development Corporation followed in the United States in 1975, and NEC, Toshiba and Fujitsu in 1976 and 1977.',
+    'Aaen, Bøtcher and Mathiassen (1997); Cusumano, "Japan\'s Software Factories" (Oxford University Press, 1991).'],
+  ['2004', 'Reuse through patterns and models', 'Jack Greenfield and Keith Short, architects at Microsoft, redefined the term: a product line set up with languages, patterns, frameworks and tools, to produce variants of one kind of application.',
+    'Greenfield, Short, Cook and Kent, "Software Factories" (Wiley, 2004).'],
+  ['2001 to 2019', 'The pipeline became automatic', 'Continuous integration servers appeared in the early 2000s, with CruiseControl in 2001 and Hudson, later Jenkins, a few years after. By the 2010s automated build, test and deploy was standard, and in 2019 GitHub built it into the repository with Actions.',
+    'CircleCI, "A brief history of DevOps, part III"; GitHub announcements of 8 August and 13 November 2019.'],
+  ['Now', 'Agents do the work in between', 'Pipelines automated the deterministic steps. Agents now do the unstructured work between them, including writing the code. The basic loop is a trigger, an agent, a proposed change and a merge.', ''],
 ]
 const PROBLEMS = [
   ['It grades its own work.', 'The context that wrote the bug reads it again and finds it reasonable.'],
@@ -498,7 +502,7 @@ const SLIDES = [
 
   { name: 'Background', side: 'left', steps: 5, frame: (s) => [1400 + s * 600, -450, 2500],
     html: (s) => `<p class="kicker">${HISTORY[s][0]}</p><h2>${HISTORY[s][1]}</h2><p>${HISTORY[s][2]}</p>
-      <p class="dim small">History as told in ZazenCodes, <a href="https://www.youtube.com/watch?v=ctoaIC4LHmI">Build Your Own AI Software Factory with Claude Code</a>.</p>`,
+      ${HISTORY[s][3] ? `<p class="dim small">Source: ${HISTORY[s][3]}</p>` : ''}`,
     board: (s) => { cl('history', 'hide', false); ERAS.forEach((_, i) => { lampSet('h' + i, i < s ? 'ok' : i === s ? 'warn' : ''); cl('hseg-' + i, 'live', i <= s) }) } },
 
   { name: 'The problem', side: 'left', frame: [2300, 400, 2400], steps: 3,
