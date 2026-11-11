@@ -1,0 +1,3 @@
+# Shell and Python scripts break with CRLF line endings (Windows git, WSL).
+* text=auto eol=lf
+*.png binary
