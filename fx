@@ -5,41 +5,10 @@ A thin wrapper. It starts the dashboard, opens the presentation, checks the
 prerequisites and resets a demo sandbox. Everything about jobs still goes
 through factory/bin/job; fx adds no factory logic of its own.
 
-Usage:
-  fx doctor            check that this machine can run the factory
-  fx up [--no-open]    start the dashboard, open it and the presentation
-  fx down              stop the dashboard
-  fx deck              open the presentation
-  fx run [issue]       start Claude Code on /factory run (you still watch it)
-  fx issues            list the issues
-  fx queue <issue>     label an issue so the factory picks it up
-  fx unqueue <issue>   remove that label
-  fx status            jobs, and what the next run would do
-  fx watch             show job files as they are written (Ctrl-C to stop)
-  fx config            show the settings worth changing in a demo
-  fx config <key> <value>   change one and commit it (see `fx config` for the keys)
-
-When a job waits for you (the "Needs human" column):
-  fx show <job>        the decision, the change and your options
-  fx approve <job>     approve it: the factory runs the checks again and merges
-  fx feedback <job> [words]   send it back to work with your instructions
-  fx reject <job> [words]     drop it, with your reason
-  fx retry <job>       try a failed merge again
-  fx park <job> [words]       stop a running job that is stuck
-
-Words can follow the command, come on stdin, or be typed in your editor.
-<job> is a job id or its issue number.
-
-  fx baseline          mark the current state as the demo's starting point
-  fx reset             discard the work, keep your setup changes, start again
-  fx reset --setup     also discard setup changes: back to how the sandbox was made
-                       both take --yes (don't ask) and --keep (save this run's
-                       job files under factory/runs/ first)
-
-The factory itself runs inside a Claude Code session: `fx run` opens one and
-types the command, and from there it is yours to watch and approve.
+Run `fx` for the list of commands and `fx <command> --help` for one of them.
 """
 
+import argparse
 import json
 import os
 import re
@@ -598,50 +567,151 @@ def cmd_config(args):
 
 # ---- main ------------------------------------------------------------------
 
+INTRO = """One entry point for running and showing the software factory.
 
-def main(argv):
-    sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with the scripts we call
-    if not argv or argv[0] in {"-h", "--help", "help"}:
-        print(__doc__.strip())
-        return 0
-    cmd, args = argv[0], argv[1:]
+The factory itself runs inside a Claude Code session that you watch.
+`fx run` opens that session and types the command for you."""
+
+EXAMPLES = """examples:
+  fx doctor                  is this machine ready?
+  fx up                      dashboard and presentation
+  fx queue 2 && fx run       queue issue 2, then run the factory
+  fx config review.low sonnet
+  fx show 1 && fx approve 1  look at a job that waits for you, then approve it
+  fx feedback 1 use the same wording as the events page
+  fx reset --keep            start again, keeping your setup and a copy of this run
+
+Run `fx <command> --help` for the details of one command."""
+
+# name, one-line help, longer description (None = the one-liner)
+COMMANDS = [
+    ("doctor", "check that this machine can run the factory",
+     "Checks Python, git, pytest, ruff, the Claude Code version, the tracker's tool, the\n"
+     "optional browser tools and whether factory/checks.sh passes. Exits 1 if something\n"
+     "the factory needs is missing, and says what."),
+    ("up", "start the dashboard, open it and the presentation",
+     "Starts the dashboard on a free port bound to 127.0.0.1 and opens it and\n"
+     "docs/presentation.html in the browser. Running it again reuses the same server."),
+    ("down", "stop the dashboard", None),
+    ("deck", "open the presentation", None),
+    ("run", "open Claude Code on /factory run",
+     "Opens Claude Code in this folder and types `/factory run`, or `/factory run <issue>`\n"
+     "for one issue. From there the session is yours to watch and approve."),
+    ("issues", "list the issues: ref, state, labels, title", None),
+    ("queue", "label an issue so the next run picks it up", None),
+    ("unqueue", "remove that label from an issue", None),
+    ("status", "show the jobs and what the next run would do", None),
+    ("watch", "show job files as they are written (Ctrl-C to stop)", None),
+    ("show", "a waiting job: the decision, the change, your options", None),
+    ("approve", "approve a waiting job; the factory re-checks and merges",
+     "Shows the job, asks, then approves it. The factory syncs the branch with the base,\n"
+     "runs the gate again and merges. Only a job whose tip is a commit the gate has\n"
+     "passed can be approved, so the checks are never skipped."),
+    ("feedback", "send a waiting job back to work with your instructions",
+     "Your words go to the factory as feedback-<k>.md and the job goes back to work.\n"
+     + "Write them after the job, pipe them in, or leave them out to type them in your editor.\n"
+     "Then run `fx run` so the factory picks the job up."),
+    ("reject", "drop a waiting job, with your reason",
+     "Your reason is posted on the issue. Write it after the job, pipe it in, or leave\n"
+     "it out to type it in your editor."),
+    ("retry", "try a failed merge again", None),
+    ("park", "stop a running job that is stuck; it waits for you instead",
+     "Moves a job out of a running stage into `needs-human`, with your reason. Use it\n"
+     "when an agent died or an issue went away. `fx feedback` resumes the job."),
+    ("config", "show the settings worth changing, or change one",
+     "Without arguments, shows the settings and the keys you can change.\n"
+     "With a key and a value, checks the value, changes factory/config.json and commits it."),
+    ("baseline", "mark the current state as the starting point for `fx reset`",
+     "Records the current commit, issue files and finished job records as the state\n"
+     "`fx reset` returns to. Local sandboxes only."),
+    ("reset", "discard the work, keep your setup changes, start again",
+     "Discards the work: jobs, job branches, merged changes and the state of the issues.\n"
+     "Keeps your changes to the setup (factory/config.json, factory/checks.sh, .claude/\n"
+     "and AGENTS.md), committed or not, and makes them part of the new starting point.\n"
+     "Local sandboxes only. It lists what it will delete and asks first."),
+]
+
+
+def build_parser():
+    fmt = argparse.RawDescriptionHelpFormatter
+    parser = argparse.ArgumentParser(prog="fx", description=INTRO, epilog=EXAMPLES, formatter_class=fmt)
+    sub = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
+    made = {}
+    for name, short_help, long_help in COMMANDS:
+        made[name] = sub.add_parser(name, help=short_help, description=long_help or short_help.capitalize() + ".",
+                                    formatter_class=fmt)
+    made["up"].add_argument("--no-open", action="store_true", help="start the dashboard without opening a browser")
+    made["run"].add_argument("issue", nargs="?", help="run only this issue")
+    made["queue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
+    made["unqueue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
+    for name in ("show", "approve", "feedback", "reject", "retry", "park"):
+        made[name].add_argument("job", help="a job id, or its issue's ref")
+    for name, what in (("feedback", "what should change"), ("reject", "why it is dropped"),
+                       ("park", "why it is stopped")):
+        made[name].add_argument("words", nargs="*", help=f"{what}; left out, it comes from stdin or your editor")
+    made["approve"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    made["config"].add_argument("key", nargs="?", choices=sorted(CONFIG_KEYS), metavar="key",
+                                help="one of: " + ", ".join(sorted(CONFIG_KEYS)))
+    made["config"].add_argument("value", nargs="?", help="the new value")
+    made["reset"].add_argument("--setup", action="store_true",
+                               help="also discard setup changes: back to how the sandbox was made")
+    made["reset"].add_argument("--keep", action="store_true",
+                               help="save this run's job folders under factory/runs/ first")
+    made["reset"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    return parser
+
+
+def dispatch(ns):
+    cmd = ns.command
     if cmd == "doctor":
         return cmd_doctor()
     if cmd == "up":
-        return cmd_up(args)
+        return cmd_up(["--no-open"] if ns.no_open else [])
     if cmd == "down":
         return cmd_down()
     if cmd == "deck":
         return cmd_deck()
-    if cmd == "run" and len(args) <= 1:
-        return cmd_run(args)
-    if cmd == "issues" and not args:
+    if cmd == "run":
+        return cmd_run([ns.issue] if ns.issue else [])
+    if cmd == "issues":
         return job("issues")
-    if cmd in {"queue", "unqueue"} and len(args) == 1:
-        return job("label" if cmd == "queue" else "unlabel", args[0], config()["labels"]["queue"])
+    if cmd in {"queue", "unqueue"}:
+        return job("label" if cmd == "queue" else "unlabel", ns.issue, config()["labels"]["queue"])
     if cmd == "status":
         return cmd_status()
     if cmd == "watch":
         return cmd_watch()
-    if cmd == "show" and len(args) == 1:
-        return job("show", args[0])
+    if cmd == "show":
+        return job("show", ns.job)
     if cmd == "approve":
-        return cmd_approve(args)
-    if cmd == "retry" and len(args) == 1:
-        return job("merge", args[0])
+        return cmd_approve([ns.job] + (["--yes"] if ns.yes else []))
+    if cmd == "retry":
+        return job("merge", ns.job)
     if cmd == "feedback":
-        return decide("feedback", args, "What should change? Your words go to the builder.")
+        return decide("feedback", [ns.job, *ns.words], "What should change? Your words go to the builder.")
     if cmd == "reject":
-        return decide("reject", args, "Why is this job dropped? Your reason is posted on the issue.")
+        return decide("reject", [ns.job, *ns.words], "Why is this job dropped? Your reason is posted on the issue.")
     if cmd == "park":
-        return decide("park", args, "Why is this job stopped? Your reason is posted on the issue.")
+        return decide("park", [ns.job, *ns.words], "Why is this job stopped? Your reason is posted on the issue.")
     if cmd == "config":
-        return cmd_config(args)
+        if (ns.key is None) != (ns.value is None):
+            die("give both a key and a value, or neither; run `fx config` for the keys")
+        return cmd_config([ns.key, ns.value] if ns.key else [])
     if cmd == "baseline":
         return cmd_baseline()
     if cmd == "reset":
-        return cmd_reset(args)
-    die(f"unknown command: {' '.join(argv)}\n\n{__doc__.strip()}")
+        return cmd_reset([flag for flag, on in (("--setup", ns.setup), ("--keep", ns.keep), ("--yes", ns.yes)) if on])
+
+
+def main(argv):
+    if hasattr(signal, "SIGPIPE"):  # `fx status | head` ends quietly instead of with a traceback
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with the scripts we call
+    parser = build_parser()
+    if not argv or argv[0] == "help":
+        parser.print_help()
+        return 0
+    return dispatch(parser.parse_args(argv)) or 0
 
 
 if __name__ == "__main__":
