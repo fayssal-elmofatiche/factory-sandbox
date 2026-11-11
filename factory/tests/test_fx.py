@@ -219,12 +219,22 @@ def test_reset_refuses_uncommitted_changes_outside_the_setup(sandbox):
 
 
 def test_reset_and_baseline_refuse_a_repository_that_is_not_a_local_sandbox(tmp_path):
-    clone = tmp_path / "clone"  # a copy of this repo: tracker github, origin not a sandbox folder
+    # A clone of this checkout: its origin is a working repository, whatever its tracker is.
+    clone = tmp_path / "clone"
     run(["git", "clone", "-q", str(REPO), str(clone)], cwd=tmp_path)
     shutil.copy2(REPO / "fx", clone / "fx")
+    before = run(["git", "rev-parse", "HEAD"], cwd=REPO).stdout
     for command in (["reset", "--yes"], ["baseline"]):
         res = run(["./fx", *command], cwd=clone, check=False)
         assert res.returncode != 0 and "local sandbox" in res.stderr
+    assert run(["git", "rev-parse", "HEAD"], cwd=REPO).stdout == before
+
+
+def test_reset_refuses_a_files_tracker_whose_origin_is_a_working_checkout(sandbox, tmp_path):
+    clone = tmp_path / "clone-of-sandbox"  # tracker files, but origin is the sandbox's checkout
+    run(["git", "clone", "-q", str(sandbox), str(clone)], cwd=tmp_path)
+    res = run(["./fx", "reset", "--yes"], cwd=clone, check=False)
+    assert res.returncode != 0 and "working checkout" in res.stderr
 
 
 # ---- a person's decisions ------------------------------------------------------

@@ -335,7 +335,11 @@ def local_sandbox():
         die("this works only in a local sandbox whose tracker is files (see docs/local-mode.md)")
     url = sh("git", "remote", "get-url", "origin", check=True).stdout.strip()
     if re.match(r"^(https?://|ssh://|git@|git://)", url) or not Path(url).exists():
-        die(f"origin is {url}, not a folder on this machine; fx will not reset a shared repository")
+        die(f"origin is {url}, not a folder on this machine; this works only in a local sandbox")
+    # local-setup.sh gives a sandbox a bare origin. A clone of somebody's checkout has a
+    # working repository as its origin, and that is not ours to rewrite.
+    if sh("git", "-C", url, "rev-parse", "--is-bare-repository").stdout.strip() != "true":
+        die(f"origin ({url}) is a working checkout, not the bare repository of a local sandbox")
     return config()["base_branch"]
 
 
