@@ -92,6 +92,9 @@ command you ran and its result, or what the page showed.
   `gh pr create --draft --base <base> --head <branch> --title "<spec title>" --body "Closes #<issue>"`
   followed by a blank line and your Summary. Once it exists, just push; the PR
   updates itself. Never mark the PR ready and never merge it.
+- Local mode: if `factory/config.json` has `"tracker": "kata"`, there are no
+  pull requests and no GitHub. Skip the PR step and never run `gh`: push the
+  branch and stop there. The factory merges it.
 
 ## Write build.md
 
