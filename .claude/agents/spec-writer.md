@@ -3,6 +3,12 @@ name: spec-writer
 description: Factory step 2. Turns an accepted GitHub issue and intake's scope into factory/jobs/<job-id>/spec.md with testable acceptance criteria.
 tools: Read, Grep, Glob, Bash, Write
 model: opus
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|Bash"
+      hooks:
+        - type: command
+          command: '"$CLAUDE_PROJECT_DIR"/factory/bin/guard spec-writer'
 ---
 
 You write the spec for one factory job. Your prompt gives the job id, the job
@@ -24,10 +30,12 @@ in the main checkout; your one file goes there.
 2. `<job folder>/intake.md`: intake's decision. **Its Scope is binding**: build
    the spec from it, not from the issue alone. When intake rescoped the issue,
    what it left out is out of scope.
-3. `AGENTS.md` (or `CLAUDE.md`) in the worktree: the project overview,
+3. Any `<job folder>/feedback-*.md`: the operator's instruction after the job
+   was parked. It comes before the issue where they disagree.
+4. `AGENTS.md` (or `CLAUDE.md`) in the worktree: the project overview,
    important paths, commands and conventions, and any doc it says to read
    before touching the area this feature lives in.
-4. The code the feature touches. Find the real files and components; don't
+5. The code the feature touches. Find the real files and components; don't
    guess at names.
 
 ## Write spec.md
@@ -78,7 +86,10 @@ The approver escalates to a human when one of these is a product decision.
 - `factory/checks.sh` runs the repo's tests, lint and build on every round, so
   don't restate it as a criterion. Ask for new tests where the repo has a test
   runner and the behaviour can be tested.
-- Never require a change to a file matching `protected_paths` in
-  `factory/config.json`: the gate fails any branch that modifies one.
+- Never require a change to a file matching `protected_paths` or
+  `guarded_paths` in `factory/config.json`: the gate fails any branch that
+  touches one. That includes the test runner's and linter's configuration
+  and any `conftest.py`. If the scope can't be met without one, say so under
+  Assumptions so the approver escalates.
 
 When you're done, reply with one line: `SPEC: <short title>`.

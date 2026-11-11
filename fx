@@ -271,6 +271,61 @@ def cmd_watch():
         return 0
 
 
+# ---- a person's decisions --------------------------------------------------
+
+
+def words(args, what):
+    """The text for a decision: the rest of the command line, stdin when it is
+    piped, or whatever the person writes in their editor."""
+    if args:
+        return " ".join(args)
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor:
+        print(f"{what} End with Ctrl-D on an empty line.")
+        return sys.stdin.read()
+    import shlex
+    import tempfile
+    with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False) as f:
+        f.write(f"\n# {what}\n# Lines starting with # are ignored. Leave it empty to cancel.\n")
+        path = f.name
+    try:
+        subprocess.run([*shlex.split(editor), path])
+        lines = Path(path).read_text().splitlines()
+    finally:
+        os.unlink(path)
+    return "\n".join(line for line in lines if not line.startswith("#")).strip()
+
+
+def decide(verb, args, what):
+    if not args:
+        die(f"usage: fx {verb} <job> [words]")
+    text = words(args[1:], what)
+    if not text.strip():
+        die("nothing written; nothing changed")
+    code = subprocess.run([str(JOB), verb, args[0]], cwd=REPO, input=text, text=True).returncode
+    if code == 0 and verb == "feedback":
+        print("Run ./fx run to put the factory back to work on it.")
+    return code
+
+
+def cmd_approve(args):
+    yes = "--yes" in args
+    args = [a for a in args if a != "--yes"]
+    if len(args) != 1:
+        die("usage: fx approve <job> [--yes]")
+    if job("show", args[0]):
+        return 1
+    if not yes:
+        if not sys.stdin.isatty():
+            die("approving merges code; pass --yes to do it without a prompt")
+        if input("\nApprove and merge this job? [y/N] ").strip().lower() not in {"y", "yes"}:
+            print("Nothing changed.")
+            return 0
+    return job("approve", args[0])
+
+
 # ---- baseline, reset and config --------------------------------------------
 
 
@@ -526,6 +581,8 @@ EXAMPLES = """examples:
   fx up                      dashboard and presentation
   fx queue 2 && fx run       queue issue 2, then run the factory
   fx config review.low sonnet
+  fx show 1 && fx approve 1  look at a job that waits for you, then approve it
+  fx feedback 1 use the same wording as the events page
   fx reset --keep            start again, keeping your setup and a copy of this run
 
 Run `fx <command> --help` for the details of one command."""
@@ -549,6 +606,22 @@ COMMANDS = [
     ("unqueue", "remove that label from an issue", None),
     ("status", "show the jobs and what the next run would do", None),
     ("watch", "show job files as they are written (Ctrl-C to stop)", None),
+    ("show", "a waiting job: the decision, the change, your options", None),
+    ("approve", "approve a waiting job; the factory re-checks and merges",
+     "Shows the job, asks, then approves it. The factory syncs the branch with the base,\n"
+     "runs the gate again and merges. Only a job whose tip is a commit the gate has\n"
+     "passed can be approved, so the checks are never skipped."),
+    ("feedback", "send a waiting job back to work with your instructions",
+     "Your words go to the factory as feedback-<k>.md and the job goes back to work.\n"
+     + "Write them after the job, pipe them in, or leave them out to type them in your editor.\n"
+     "Then run `fx run` so the factory picks the job up."),
+    ("reject", "drop a waiting job, with your reason",
+     "Your reason is posted on the issue. Write it after the job, pipe it in, or leave\n"
+     "it out to type it in your editor."),
+    ("retry", "try a failed merge again", None),
+    ("park", "stop a running job that is stuck; it waits for you instead",
+     "Moves a job out of a running stage into `needs-human`, with your reason. Use it\n"
+     "when an agent died or an issue went away. `fx feedback` resumes the job."),
     ("config", "show the settings worth changing, or change one",
      "Without arguments, shows the settings and the keys you can change.\n"
      "With a key and a value, checks the value, changes factory/config.json and commits it."),
@@ -575,6 +648,12 @@ def build_parser():
     made["run"].add_argument("issue", nargs="?", help="run only this issue")
     made["queue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     made["unqueue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
+    for name in ("show", "approve", "feedback", "reject", "retry", "park"):
+        made[name].add_argument("job", help="a job id, or its issue's ref")
+    for name, what in (("feedback", "what should change"), ("reject", "why it is dropped"),
+                       ("park", "why it is stopped")):
+        made[name].add_argument("words", nargs="*", help=f"{what}; left out, it comes from stdin or your editor")
+    made["approve"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
     made["config"].add_argument("key", nargs="?", choices=sorted(CONFIG_KEYS), metavar="key",
                                 help="one of: " + ", ".join(sorted(CONFIG_KEYS)))
     made["config"].add_argument("value", nargs="?", help="the new value")
@@ -606,6 +685,18 @@ def dispatch(ns):
         return cmd_status()
     if cmd == "watch":
         return cmd_watch()
+    if cmd == "show":
+        return job("show", ns.job)
+    if cmd == "approve":
+        return cmd_approve([ns.job] + (["--yes"] if ns.yes else []))
+    if cmd == "retry":
+        return job("merge", ns.job)
+    if cmd == "feedback":
+        return decide("feedback", [ns.job, *ns.words], "What should change? Your words go to the builder.")
+    if cmd == "reject":
+        return decide("reject", [ns.job, *ns.words], "Why is this job dropped? Your reason is posted on the issue.")
+    if cmd == "park":
+        return decide("park", [ns.job, *ns.words], "Why is this job stopped? Your reason is posted on the issue.")
     if cmd == "config":
         if (ns.key is None) != (ns.value is None):
             die("give both a key and a value, or neither; run `fx config` for the keys")

@@ -139,6 +139,22 @@
     font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.6;
     overflow-wrap: anywhere;
   }
+  /* What a person can do with a waiting job: one command per line, each with a copy button. */
+  .moves { margin: 12px 0 0; display: grid; gap: 6px; }
+  .moves[hidden] { display: none; }
+  .moves .why { font-size: 12px; color: var(--muted); }
+  .move { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .move code {
+    font-family: var(--mono); font-size: 12px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; overflow-x: auto; white-space: nowrap; user-select: all;
+  }
+  .move .what { grid-column: 1 / -1; font-size: 11.5px; color: var(--faint); margin-top: -2px; }
+  .copy {
+    font-family: var(--mono); font-size: 11px; color: var(--muted); background: none; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; min-width: 58px;
+  }
+  .copy:hover { color: var(--text); border-color: var(--muted); }
+  .copy:focus-visible { outline: 2px solid var(--active); outline-offset: 1px; }
 
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
@@ -277,6 +293,7 @@
       <div class="num" id="d-num"></div>
       <h3 id="d-title"></h3>
       <div class="links" id="d-links"></div>
+      <div class="moves" id="d-moves" hidden></div>
       <button class="close" data-close aria-label="Close">×</button>
     </div>
     <div class="d-body">
@@ -376,8 +393,21 @@ const link = (url, text) =>
 function links(job) {
   const out = [link(job.issue_url, `issue #${job.issue}`)]
   if (job.pr) out.push(link(job.pr_url, `PR #${job.pr}`))
+  // On the local host there is no PR: show the commit that landed on the base.
+  else if (job.merged_sha) out.push(`<span title="merged at ${esc(job.merged_sha)}">merged ${esc(job.merged_sha.slice(0, 7))}</span>`)
   return out.join('')
 }
+
+// How long since the scripts last touched the job. A long quiet stretch on a
+// running job usually means its agent is still working, or has died.
+function quiet(job) {
+  if (!job.updated) return ''
+  const min = Math.floor((Date.now() - new Date(job.updated)) / 60000)
+  return min >= 10 ? `<span title="no script has touched this job for ${min} minutes">quiet ${min}m</span>` : ''
+}
+
+// "+" marks a cost that leaves out tokens of a model with no price in config.json.
+const cost = (job) => `$${Number(job.cost_usd).toFixed(2)}${job.cost_incomplete ? '+' : ''}`
 
 function card(job, rounds) {
   const live = LIVE.has(job.stage)
@@ -390,8 +420,9 @@ function card(job, rounds) {
   const risk = job.intake?.risk
   const meta = [
     risk ? `<span class="risk-${esc(risk)}">${esc(risk)}</span>` : '',
-    `<span>$${Number(job.cost_usd).toFixed(2)}</span>`,
+    `<span${job.cost_incomplete ? ` title="no price for ${esc(job.cost_incomplete.join(', '))}"` : ''}>${cost(job)}</span>`,
     `<span>${elapsed(job)}</span>`,
+    live ? quiet(job) : '',
   ].join('')
   return `
     <article class="card ${live ? 'live' : ''} ${human ? 'human' : ''} ${done ? 'done' : ''} ${job.stage}"
@@ -405,7 +436,7 @@ function card(job, rounds) {
       <div class="links">${links(job)}</div>
       ${rounds.length ? `<div class="rounds">${rounds.join('')}</div>` : ''}
       <div class="meta">${meta}</div>
-      ${human ? `<div class="hint">${job.pr ? `merge PR #${job.pr} to approve<br>` : ''}or give feedback: /factory &lt;anything&gt;</div>` : ''}
+      ${human ? `<div class="hint">${job.merge_failed ? 'the merge failed' : 'your decision'}: open this card for the commands</div>` : ''}
     </article>`
 }
 
@@ -505,12 +536,73 @@ function tone(first) {
 
 const firstLines = new Map()
 
+// The commands that decide a waiting job. The dashboard only reads files, so
+// it shows what to type; the scripts do the work and check it.
+function moves(job) {
+  const id = job.id
+  if (job.stage === 'needs-human') {
+    const out = []
+    if (job.merge_failed) out.push([`./fx retry ${id}`, 'The merge failed. Try it again; no new round is needed.'])
+    else if (job.gated_sha) out.push([`./fx approve ${id}`, 'Approve it. The factory runs the checks again and merges.'])
+    out.push([`./fx feedback ${id}`, 'Send it back to work. You write what should change.'])
+    out.push([`./fx reject ${id}`, 'Drop it. Your reason is posted on the issue.'])
+    const why = job.merge_failed ? 'The merge failed.'
+      : job.gated_sha ? 'Waiting for your decision. Read decision.md below first.'
+      : 'Waiting for you. It can\'t be approved as it is: no commit has passed the checks.'
+    return { why, list: out }
+  }
+  if (job.stage === 'needs-info') {
+    return { why: 'The factory asked the author a question. See intake.md below.', list: [
+      [`factory/bin/job answer ${id}`, 'Answer it. Your words go on the issue (type them, then Ctrl-D).'],
+      [`./fx reject ${id}`, 'Drop it. Your reason is posted on the issue.'],
+    ] }
+  }
+  if (LIVE.has(job.stage)) {
+    return { why: '', list: [[`./fx park ${id}`, 'Stop this job if it is stuck. It waits for you instead.']] }
+  }
+  return null
+}
+
+function movesHtml(job) {
+  const m = moves(job)
+  if (!m) return ''
+  return (m.why ? `<div class="why">${esc(m.why)}</div>` : '') + m.list.map(([cmd, what]) => `
+    <div class="move">
+      <code>${esc(cmd)}</code>
+      <button class="copy" data-copy="${esc(cmd)}" aria-label="Copy the command ${esc(cmd)}">copy</button>
+      <div class="what">${esc(what)}</div>
+    </div>`).join('')
+}
+
+async function copyText(button) {
+  const text = button.dataset.copy
+  try {
+    await navigator.clipboard.writeText(text)
+    button.textContent = 'copied'
+  } catch {
+    // No clipboard access (an http page that isn't localhost): select the command instead.
+    const range = document.createRange()
+    range.selectNodeContents(button.previousElementSibling)
+    const sel = getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    button.textContent = 'selected'
+  }
+  setTimeout(() => { button.textContent = 'copy' }, 1500)
+}
+
 async function refreshDrawer() {
   const job = jobs.find((j) => j.id === openJobId)
   if (!job) return
-  $('d-num').textContent = `${job.id} · ${job.stage}${job.round ? ` · round ${job.round}` : ''} · $${Number(job.cost_usd).toFixed(2)} · ${elapsed(job)}`
+  $('d-num').textContent = `${job.id} · ${job.stage}${job.round ? ` · round ${job.round}` : ''} · ${cost(job)} · ${elapsed(job)}`
   $('d-title').textContent = job.title
   $('d-links').innerHTML = links(job)
+  const m = movesHtml(job)
+  if ($('d-moves').dataset.html !== m) {  // don't rebuild under a button someone is about to click
+    $('d-moves').dataset.html = m
+    $('d-moves').innerHTML = m
+    $('d-moves').hidden = !m
+  }
 
   const base = `jobs/${job.id}/`
   const files = sortFiles(await listFiles(base))
@@ -547,7 +639,9 @@ async function refreshDrawer() {
 
 async function openDrawer(id) {
   openJobId = id
-  openPath = null
+  // A waiting job opens on the file that says what it waits for.
+  const stage = jobs.find((j) => j.id === id)?.stage
+  openPath = stage === 'needs-human' ? 'decision.md' : stage === 'needs-info' ? 'intake.md' : null
   openText = undefined
   document.body.classList.add('open')
   try {
@@ -564,6 +658,8 @@ function closeDrawer() {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('a')) return
+  const copyEl = e.target.closest('[data-copy]')
+  if (copyEl) return copyText(copyEl)
   const cardEl = e.target.closest('[data-job]')
   if (cardEl) return openDrawer(cardEl.dataset.job)
   const fileEl = e.target.closest('[data-file]')

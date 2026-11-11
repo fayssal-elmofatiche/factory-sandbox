@@ -30,7 +30,7 @@ cd ~/factory-demo
 
 You need git, Python 3.10+ with pytest and ruff, and Claude Code 2.1.257 or
 later on a plan that includes Fable. `./fx doctor` checks all of that and says
-what is missing. It works on macOS, Linux and Windows with WSL; see
+what is missing. The scripts are tested on macOS and Ubuntu; on Windows use WSL. See
 [docs/local-mode.md](docs/local-mode.md) for the WSL steps.
 
 ## How it works
@@ -48,7 +48,7 @@ intake → route → spec → build → gate → review → approve → merge
 | spec    | agent                      | a spec with numbered acceptance criteria                |
 | build   | agent                      | commits on a branch in its own git worktree             |
 | gate    | `factory/bin/gate` script  | the result of `factory/checks.sh` and a protected-paths check |
-| review  | routed agents              | code, security, UX and UI reviews, as the risk demands  |
+| review  | routed agents              | code, security, UX and UI reviews, as risk and the diff demand |
 | approve | agent                      | approve, or hand the decision to a person               |
 | merge   | `factory/bin/job` script   | sync with `main`, run the gate again, merge             |
 
@@ -69,20 +69,33 @@ Three kinds of actor are involved:
 The design choices that carry the weight:
 
 - **A script owns the state.** `factory/bin/job` is the only writer of
-  `job.json`, and it refuses illegal stage transitions.
+  `job.json`, and it refuses illegal stage transitions. It records the hash of
+  every file it accepts and the commit each stage saw, so a verdict rewritten
+  later, or a commit added after review, stops the job. Every transition is
+  appended to the job's `events.jsonl`.
 - **The checks come from `main`.** The gate runs `checks.sh` from the main
-  checkout and fails a branch that edits a protected path such as `checks.sh`
-  or `config.json`.
-- **Risk decides the review.** A low-risk change gets one code reviewer on the
-  smallest model. A change intake marks as touching the interface or security
-  gets more reviewers. The table is in `factory/config.json`.
-- **Issue text is data.** Agents receive issue text as quoted data and are told
-  to ignore instructions inside it.
+  checkout and fails a branch that touches the factory's own files or the
+  configuration the checks read (`pyproject.toml`, any `conftest.py`). The
+  checks fail on skipped tests and on a branch with fewer tests than the base.
+- **Risk and the diff decide the review.** A low-risk change gets one code
+  reviewer on the smallest model; a high-risk one always gets a security
+  reviewer. After the build, the files the branch changed can add reviewers
+  the issue's wording didn't call for (`surface_paths`). The tables are in
+  `factory/config.json`.
+- **Issue text is data.** Agents receive the issue title, text and comments as
+  quoted data and are told to ignore instructions inside them. An issue edited
+  after it was labeled is refused until the label is put on again.
+- **Agents are fenced in, by instruction and by hook.** Each agent's prompt
+  says what it may write, and a `PreToolUse` hook (`factory/bin/guard`) blocks
+  the rest: other agents' files, `job.json`, pushes to the base, `gh pr merge`.
 
-What this does not give you: the scripts enforce the stage transitions, and
-everything else (which agent may write which file, what counts as an honest
-test) rests on the agents' instructions. This is a demo and a design to learn
-from, not something to point at a production repository as it is.
+What this does not give you: a sandbox. Agents and the gate run on your
+machine, with your credentials, and a shell can be talked into a lot. The
+guard stops mistakes and obvious detours, not a determined attack. Use
+`"auto_merge": false` until you trust it, protect the base branch, and run it
+in a container when issues come from people you don't know. This is a demo
+and a design to learn from, not something to point at a production repository
+as it is.
 
 ## The `fx` command
 
@@ -103,6 +116,12 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
+| `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
+| `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
+| `./fx feedback <job>` | Sends it back to work with your instructions |
+| `./fx reject <job>` | Drops it, with your reason |
+| `./fx retry <job>` | Tries a failed merge again |
+| `./fx park <job>` | Stops a running job that is stuck |
 | `./fx baseline` | Marks the current state as a demo's starting point |
 | `./fx reset` | Discards the work in a local sandbox and keeps your setup changes |
 | `./fx reset --setup` | Also discards the setup changes: back to how the sandbox was made |
@@ -142,6 +161,29 @@ Every job opens one pull request, and the approver merges what it approves.
 Job files are written to `factory/jobs/<job-id>/` (gitignored). Configuration
 is in `factory/config.json`, and the checks the gate runs are in
 `factory/checks.sh`.
+
+The factory spawns background agents that run shell commands. With Claude
+Code's default permissions you approve each new kind of command once, in the
+main session; `.claude/settings.json` denies the few things nobody should do
+(merging a PR by hand, pushing to `main`, editing `job.json`).
+
+When a job lands in the dashboard's "Needs human" column, open its card: it
+shows why, and the commands for your options with a copy button each.
+
+```bash
+./fx show <job>         # the decision, the change and your options
+./fx approve <job>      # approve it: the factory runs the checks again and merges
+./fx feedback <job>     # send it back to work; you write what should change
+./fx reject <job>       # drop it; you write the reason
+./fx retry <job>        # try a failed merge again
+```
+
+Approving never skips the checks. `fx approve` only takes a job whose tip is a
+commit the gate has passed, syncs it with `main`, runs the gate again and
+merges. On GitHub you can still approve by merging the pull request yourself.
+
+The factory's own scripts have tests: `python3 -m pytest factory/tests -q`.
+Run them, and `bash factory/checks.sh`, before merging a change to the factory itself.
 
 ## Running it without GitHub
 
@@ -191,14 +233,26 @@ PORT=8001 python3 -m evently.web   # events page on http://127.0.0.1:8001/
   its security rules (escape HTML, treat emails as personal data, bind to
   localhost) and its style tokens.
 - `factory/checks.sh` runs ruff and pytest.
-- Local mode: `factory/bin/job` gains a `tracker` switch (`github`, `files`,
-  `kata`) and the commands `answer`, `new-issue`, `issues`, `label` and
-  `unlabel`. The skill, the builder and the approver each gain a short note.
-  With the default tracker the factory behaves as upstream does.
+- Trackers and hosts (November 2026): `factory/bin/job` talks to issues and
+  to the code host through two small adapter sets, picked by `tracker`
+  (`github`, `files`, `kata`) and `host` (`github`, `local`) in
+  `config.json`. No prompt names `gh` any more: the orchestrator and the
+  builder use `job answer`, `new-issue`, `issues`, `label`, `unlabel` and
+  `open-change`.
+- Hardening after a review of this repo (November 2026): commit pinning,
+  sealed files and `events.jsonl`; guarded paths, a timeout, and checks that
+  fail on skipped or removed tests; one lock for the whole factory; `job park`,
+  `show`, `mark-merged`, merge retry, `auto_merge` and `max_cost_usd`; routing
+  on the diff; `factory/bin/guard` and `.claude/settings.json`; an unpriced
+  model no longer stops a job; an optional `factory/worktree-setup.sh` that
+  prepares each job's worktree (env files, test credentials); tests in
+  `factory/tests/`.
 - `factory/local-setup.sh` creates a local sandbox, and `fx` wraps the common
   commands.
-- `factory/dashboard.html`: reviewer chips show the model each reviewer runs on.
-- `factory/config.json`: a price entry for `claude-fable-5-2`.
+- `factory/dashboard.html`: reviewer chips show the model each reviewer runs
+  on; cards show a merge commit, a quiet timer and an incomplete cost.
+- `factory/config.json`: prices for `claude-fable-5-2` and a corrected
+  cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 - `docs/presentation.html` and `docs/local-mode.md` are new.
 
 ## Licence

@@ -44,8 +44,14 @@ python3 -m pytest -q
 `/factory run` builds every open GitHub issue labeled `factory` through
 intake → spec → build → gate → review → approve, one PR per issue. State is in
 `factory/jobs/` (gitignored); `factory/bin/job` is its only writer. Checks:
-`factory/checks.sh`. Dashboard: `cd factory && python3 -m http.server --bind 127.0.0.1`, then
-open http://localhost:8000/dashboard.html.
+`factory/checks.sh`. Dashboard: `./fx up`, or `cd factory && python3 -m http.server 8765 --bind 127.0.0.1`,
+then open http://localhost:8765/dashboard.html.
+
+A job may not change the factory (`factory/bin/`, `.claude/`), the checks'
+configuration (`pyproject.toml`, any `conftest.py`) or the files in
+`protected_paths`; the gate fails a branch that does. The factory's own tests
+are in `factory/tests/` and run with `python3 -m pytest factory/tests -q`;
+they are not part of `factory/checks.sh`.
 
 The factory also runs fully locally, with no GitHub: `factory/local-setup.sh
 <dir>` creates a copy whose issues are Markdown files in `factory/issues/`

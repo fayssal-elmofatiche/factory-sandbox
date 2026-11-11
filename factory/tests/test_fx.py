@@ -235,3 +235,71 @@ def test_reset_refuses_a_files_tracker_whose_origin_is_a_working_checkout(sandbo
     run(["git", "clone", "-q", str(sandbox), str(clone)], cwd=tmp_path)
     res = run(["./fx", "reset", "--yes"], cwd=clone, check=False)
     assert res.returncode != 0 and "working checkout" in res.stderr
+
+
+# ---- a person's decisions ------------------------------------------------------
+
+
+def escalate_a_job(box, issue="1"):
+    """Drive one job to needs-human, with a commit the gate has passed."""
+    job = str(box / "factory" / "bin" / "job")
+    job_id = run([job, "create", issue], cwd=box).stdout.strip()
+    folder, tree = box / "factory" / "jobs" / job_id, box / ".worktrees" / job_id
+    (folder / "intake.md").write_text(
+        "DECISION: ACCEPT\nRISK: low\nSURFACES: none\nRESCOPED: no\n\n## Summary\n- ok\n")
+    run([str(box / "factory" / "bin" / "route"), job_id], cwd=box)
+    run([job, "advance", job_id, "spec"], cwd=box)
+    (folder / "spec.md").write_text("# spec\n")
+    run([job, "advance", job_id, "build"], cwd=box)
+    with open(tree / "evently" / "seed.py", "a") as f:
+        f.write("# escalated change\n")
+    run(["git", *GIT_ID, "commit", "-qam", "Change"], cwd=tree)
+    run(["git", "push", "-q", "-u", "origin", f"factory/{job_id}"], cwd=tree)
+    (folder / "build.md").write_text("STATUS: READY\n")
+    run([job, "advance", job_id, "gate"], cwd=box)
+    run([str(box / "factory" / "bin" / "gate"), job_id], cwd=box)
+    run([job, "advance", job_id, "review"], cwd=box)
+    (folder / "round-1" / "review-code.md").write_text("VERDICT: PASS\n")
+    run([job, "advance", job_id, "approve"], cwd=box)
+    (folder / "decision.md").write_text("ESCALATE\n\n## For the human\nIs this wording right?\n")
+    run([job, "advance", job_id, "needs-human"], cwd=box)
+    return job_id
+
+
+def stage(box, job_id):
+    return json.loads((box / "factory" / "jobs" / job_id / "job.json").read_text())["stage"]
+
+
+def test_show_then_approve_merges_a_waiting_job(sandbox):
+    job_id = escalate_a_job(sandbox)
+    out = fx(sandbox, "show", "1").stdout
+    assert "Is this wording right?" in out and "approve" in out
+    refused = fx(sandbox, "approve", "1", check=False, stdin="")
+    assert refused.returncode == 1 and "--yes" in refused.stderr and stage(sandbox, job_id) == "needs-human"
+    fx(sandbox, "approve", "1", "--yes")
+    assert stage(sandbox, job_id) == "merged"
+
+
+def test_feedback_takes_words_from_the_command_line_or_stdin(sandbox):
+    job_id = escalate_a_job(sandbox)
+    out = fx(sandbox, "feedback", "1", "use", "shorter", "wording").stdout
+    assert "fx run" in out and stage(sandbox, job_id) == "build"
+    folder = sandbox / "factory" / "jobs" / job_id
+    assert "use shorter wording" in (folder / "feedback-1.md").read_text()
+    fx(sandbox, "park", job_id, stdin="the builder died")
+    assert stage(sandbox, job_id) == "needs-human"
+    fx(sandbox, "reject", job_id, stdin="not needed after all")
+    assert stage(sandbox, job_id) == "rejected"
+
+
+def test_a_decision_without_words_changes_nothing(sandbox):
+    job_id = escalate_a_job(sandbox)
+    res = fx(sandbox, "reject", "1", check=False, stdin="  \n")
+    assert res.returncode == 1 and "nothing changed" in res.stderr and stage(sandbox, job_id) == "needs-human"
+
+
+def test_help_lists_the_decision_commands(sandbox):
+    out = fx(sandbox).stdout
+    for name in ("show", "approve", "feedback", "reject", "retry", "park"):
+        assert f"\n    {name} " in out
+    assert "--yes" in fx(sandbox, "approve", "--help").stdout

@@ -4,6 +4,11 @@ description: Factory step 3. Implements a job's spec on its factory/<job-id> bra
 tools: Read, Grep, Glob, Bash, Edit, Write
 model: opus
 hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|Bash"
+      hooks:
+        - type: command
+          command: '"$CLAUDE_PROJECT_DIR"/factory/bin/guard builder'
   Stop:
     - hooks:
         - type: command
@@ -55,9 +60,15 @@ other jobs.
 - Make the simplest change that fully meets the spec. No fallbacks, hidden
   defaults or extras the spec doesn't ask for.
 - Never modify or delete an existing file that matches `protected_paths` in
-  `factory/config.json`; the gate fails the branch if you do. If the spec
-  can't be met without changing a protected file, write a BLOCKED build.md
-  that says which file and why.
+  `factory/config.json`, and never add, modify or delete one that matches
+  `guarded_paths` (the factory's own files, the test runner's and linter's
+  configuration, any `conftest.py`); the gate fails the branch if you do. If
+  the spec can't be met without one, write a BLOCKED build.md that says which
+  file and why.
+- Never skip, deselect, delete or mark a test as an expected failure to get the
+  checks to pass. `factory/checks.sh` fails on skipped tests and on a branch
+  with fewer tests than the base. A test that is wrong gets fixed; a test you
+  can't satisfy is a BLOCKED build.md.
 
 ## Test
 
@@ -79,6 +90,10 @@ command you ran and its result, or what the page showed.
   `agent-browser --session <job-id>-builder close` and stop the dev server when
   you're done. Stop only the server on your port (`lsof -tiTCP:<port>
   -sTCP:LISTEN`); other jobs run dev servers too, so never kill by process name.
+  If `agent-browser` isn't installed (`command -v agent-browser` prints nothing), don't install
+  anything: fetch the page with `curl -s http://127.0.0.1:<port>/` and judge the HTML, and say in
+  your file that you checked the markup, not a rendered page. Where `lsof` is missing, use
+  `ss -ltnp` or `fuser <port>/tcp` to find the server's PID.
 
 ## Commit, push, PR
 
@@ -88,13 +103,20 @@ command you ran and its result, or what the page showed.
   --porcelain` should print nothing when you finish.
 - Push with `git push -u origin <branch>`. Push only the job branch, never
   anything else.
-- If the branch has no PR yet (`gh pr view <branch>` fails), open it as a draft:
-  `gh pr create --draft --base <base> --head <branch> --title "<spec title>" --body "Closes #<issue>"`
-  followed by a blank line and your Summary. Once it exists, just push; the PR
-  updates itself. Never mark the PR ready and never merge it.
-- Local mode: if `tracker` in `factory/config.json` is `files` or `kata`, there are no
-  pull requests and no GitHub. Skip the PR step and never run `gh`: push the
-  branch and stop there. The factory merges it.
+- After the first push, open the change request with the factory's script,
+  your Summary on stdin:
+
+  ```bash
+  <main checkout>/factory/bin/job open-change <job id> "<spec title>" <<'EOF'
+  <your Summary bullets>
+  EOF
+  ```
+
+  It opens a draft pull request that closes the issue, says so if one is
+  already open, and does nothing on the local host, where there are no pull
+  requests and the factory merges the branch itself. Once it exists, just
+  push; the PR updates itself. This is the only `factory/bin/job` command you
+  run. Never run `gh` yourself, never mark a PR ready and never merge.
 
 ## Write build.md
 
