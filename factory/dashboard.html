@@ -376,8 +376,21 @@ const link = (url, text) =>
 function links(job) {
   const out = [link(job.issue_url, `issue #${job.issue}`)]
   if (job.pr) out.push(link(job.pr_url, `PR #${job.pr}`))
+  // On the local host there is no PR: show the commit that landed on the base.
+  else if (job.merged_sha) out.push(`<span title="merged at ${esc(job.merged_sha)}">merged ${esc(job.merged_sha.slice(0, 7))}</span>`)
   return out.join('')
 }
+
+// How long since the scripts last touched the job. A long quiet stretch on a
+// running job usually means its agent is still working, or has died.
+function quiet(job) {
+  if (!job.updated) return ''
+  const min = Math.floor((Date.now() - new Date(job.updated)) / 60000)
+  return min >= 10 ? `<span title="no script has touched this job for ${min} minutes">quiet ${min}m</span>` : ''
+}
+
+// "+" marks a cost that leaves out tokens of a model with no price in config.json.
+const cost = (job) => `$${Number(job.cost_usd).toFixed(2)}${job.cost_incomplete ? '+' : ''}`
 
 function card(job, rounds) {
   const live = LIVE.has(job.stage)
@@ -390,8 +403,9 @@ function card(job, rounds) {
   const risk = job.intake?.risk
   const meta = [
     risk ? `<span class="risk-${esc(risk)}">${esc(risk)}</span>` : '',
-    `<span>$${Number(job.cost_usd).toFixed(2)}</span>`,
+    `<span${job.cost_incomplete ? ` title="no price for ${esc(job.cost_incomplete.join(', '))}"` : ''}>${cost(job)}</span>`,
     `<span>${elapsed(job)}</span>`,
+    live ? quiet(job) : '',
   ].join('')
   return `
     <article class="card ${live ? 'live' : ''} ${human ? 'human' : ''} ${done ? 'done' : ''} ${job.stage}"
@@ -405,7 +419,7 @@ function card(job, rounds) {
       <div class="links">${links(job)}</div>
       ${rounds.length ? `<div class="rounds">${rounds.join('')}</div>` : ''}
       <div class="meta">${meta}</div>
-      ${human ? `<div class="hint">${job.pr ? `merge PR #${job.pr} to approve<br>` : ''}or give feedback: /factory &lt;anything&gt;</div>` : ''}
+      ${human ? `<div class="hint">${job.merge_failed ? `merge failed: retry with factory/bin/job merge ${esc(job.id)}<br>` : job.pr ? `merge PR #${job.pr} to approve<br>` : ''}or give feedback: /factory &lt;anything&gt;<br>details: factory/bin/job show ${esc(job.id)}</div>` : ''}
     </article>`
 }
 
@@ -508,7 +522,7 @@ const firstLines = new Map()
 async function refreshDrawer() {
   const job = jobs.find((j) => j.id === openJobId)
   if (!job) return
-  $('d-num').textContent = `${job.id} · ${job.stage}${job.round ? ` · round ${job.round}` : ''} · $${Number(job.cost_usd).toFixed(2)} · ${elapsed(job)}`
+  $('d-num').textContent = `${job.id} · ${job.stage}${job.round ? ` · round ${job.round}` : ''} · ${cost(job)} · ${elapsed(job)}`
   $('d-title').textContent = job.title
   $('d-links').innerHTML = links(job)
 

@@ -30,21 +30,36 @@ intake → spec → build → gate → review → approve → merge
 | spec     | agent                       | a spec with acceptance criteria                    |
 | build    | agent                       | commits on a branch in its own git worktree        |
 | gate     | `factory/bin/gate` script   | `factory/checks.sh` result and a protected-paths check |
-| review   | routed agents               | code, security, UX and UI reviews, as risk demands |
-| approve  | agent                       | merge, send back, or escalate to a human           |
+| review   | routed agents               | code, security, UX and UI reviews, as risk and the diff demand |
+| approve  | agent                       | approve the merge, or escalate to a human          |
 
 A few design choices carry the weight:
 
-- **Agents never write job state.** `factory/bin/job` is the only writer of
-  `job.json` and refuses illegal stage transitions.
-- **The branch can't grade itself.** The gate runs the checks from `main`, and
-  fails the job if the branch touches a protected path such as `checks.sh` or
-  `config.json`.
-- **Risk decides the review.** A low-risk change gets one cheap code reviewer;
-  a change that touches attendee data gets a security reviewer on a stronger
-  model. The routing table lives in `factory/config.json`.
-- **Issue text is data.** Agents receive issue bodies as quoted data and are told
-  to ignore instructions inside them.
+- **One script owns job state.** `factory/bin/job` writes `job.json` and
+  refuses illegal stage transitions. It records the hash of every file it
+  accepts and the commit each stage saw, so a verdict rewritten later, or a
+  commit added after review, stops the job. Every transition is appended to
+  the job's `events.jsonl`.
+- **The branch can't grade itself.** The gate runs the main checkout's copy of
+  `checks.sh`, and fails a branch that touches the factory's own files or the
+  configuration the checks read (`pyproject.toml`, any `conftest.py`). The
+  checks fail on skipped tests and on a branch with fewer tests than the base.
+- **Risk and the diff decide the review.** A low-risk change gets one cheap
+  code reviewer; a high-risk one always gets a security reviewer on a stronger
+  model. After the build, the files the branch changed can add reviewers that
+  the issue's wording didn't call for (`surface_paths`). The tables live in
+  `factory/config.json`.
+- **Issue text is data.** Agents receive the issue title, body and comments as
+  quoted data and are told to ignore instructions inside them. An issue edited
+  after it was labeled is refused until the label is put on again.
+- **Agents are fenced in, by instruction and by hook.** Each agent's prompt
+  says what it may write, and a `PreToolUse` hook (`factory/bin/guard`) blocks
+  the rest: other agents' files, `job.json`, pushes to the base, `gh pr merge`.
+
+What this does not give you: a sandbox. Agents and the gate run on your
+machine, with your credentials, and a shell can be talked into a lot. Use
+`"auto_merge": false` until you trust it, protect the base branch, and run it
+in a container when issues come from people you don't know.
 
 ## Example run
 
@@ -90,7 +105,7 @@ claude                        # in the repo root
 Watch progress on the dashboard:
 
 ```bash
-cd factory && python3 -m http.server 8765
+cd factory && python3 -m http.server 8765 --bind 127.0.0.1
 # open http://localhost:8765/dashboard.html
 ```
 
@@ -98,11 +113,32 @@ Job state, specs, reviews and decisions are written to `factory/jobs/<job-id>/`
 (gitignored). Configuration is in `factory/config.json`, and the checks the gate
 runs are in `factory/checks.sh`.
 
+The factory spawns background agents that run shell commands. With Claude
+Code's default permissions you approve each new kind of command once, in the
+main session; `.claude/settings.json` denies the few things nobody should do
+(merging a PR by hand, pushing to `main`, editing `job.json`). Agents that
+check a page use the [`agent-browser`](https://github.com/vercel-labs/agent-browser)
+CLI when it is installed and fall back to reading the HTML when it is not.
+
+When a job needs you:
+
+```bash
+factory/bin/job show <job>           # the decision, the diff and your options
+factory/bin/job feedback <job>       # send it back to work, your words on stdin
+factory/bin/job reject <job>         # drop it, your reason on stdin
+factory/bin/job park <job>           # stop a running job that is stuck
+factory/bin/job merge <job>          # retry a merge that failed
+```
+
+The factory's own scripts have tests: `python3 -m pytest factory/tests -q`
+(one to two minutes). CI runs them, and `factory/checks.sh`, on every pull
+request.
+
 ## Running it without GitHub
 
 The factory also runs fully locally, with nothing to sign in to except Claude:
 issues are Markdown files, there are no pull requests, and `origin` is a folder
-on disk. It works on macOS, Linux and Windows with WSL.
+on disk. The scripts are tested on macOS and Ubuntu; on Windows use WSL.
 
 ```bash
 factory/local-setup.sh ~/factory-demo
@@ -119,11 +155,24 @@ and what changes in the pipeline.
   its security rules (escape HTML, treat emails as personal data, bind to
   localhost) and its style tokens.
 - `factory/checks.sh` runs ruff and pytest.
-- Local mode: `factory/bin/job` gains a `tracker` switch (`github`, `files`,
-  `kata`) and the commands `answer`, `new-issue`, `issues`, `label` and `unlabel`; the skill, the builder and the approver each gain a
-  short note. With the default tracker the factory behaves as upstream does.
-- `factory/dashboard.html`: reviewer chips show the model each reviewer runs on.
-- `factory/config.json`: a price entry for `claude-fable-5-2`.
+- Trackers and hosts (November 2026): `factory/bin/job` talks to issues and
+  to the code host through two small adapter sets, picked by `tracker`
+  (`github`, `files`, `kata`) and `host` (`github`, `local`) in
+  `config.json`. No prompt names `gh` any more: the orchestrator and the
+  builder use `job answer`, `new-issue`, `issues`, `label`, `unlabel` and
+  `open-change`.
+- Hardening after a review of this repo (November 2026): commit pinning,
+  sealed files and `events.jsonl`; guarded paths, a timeout, and checks that
+  fail on skipped or removed tests; one lock for the whole factory; `job park`,
+  `show`, `mark-merged`, merge retry, `auto_merge` and `max_cost_usd`; routing
+  on the diff; `factory/bin/guard` and `.claude/settings.json`; an unpriced
+  model no longer stops a job; an optional `factory/worktree-setup.sh` that
+  prepares each job's worktree (env files, test credentials); tests in
+  `factory/tests/`.
+- `factory/dashboard.html`: reviewer chips show the model each reviewer runs
+  on; cards show a merge commit, a quiet timer and an incomplete cost.
+- `factory/config.json`: prices for `claude-fable-5-2` and a corrected
+  cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 
 ## Licence
 

@@ -12,9 +12,13 @@ outside your machine and needs no account anywhere except Claude.
 
 ## Quick start
 
-Works on macOS, Linux and Windows with WSL. You need:
+The scripts are tested on macOS and on Ubuntu 22.04 and 24.04; on Windows use
+WSL. You need:
 
 - git and Python 3.10 or later, with pytest and ruff
+- optional: the [`agent-browser`](https://github.com/vercel-labs/agent-browser)
+  CLI and a browser, for agents that look at a page. Without it they read the
+  page's HTML instead and say so
 - Claude Code 2.1.257 or later, on a plan that includes Fable (intake runs on it)
 
 ```bash
@@ -28,7 +32,7 @@ claude
 In Claude Code, type `/factory run`. To watch the jobs, open a second terminal:
 
 ```bash
-cd ~/factory-demo/factory && python3 -m http.server 8765
+cd ~/factory-demo/factory && python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
 Then open `http://localhost:8765/dashboard.html`.
@@ -44,7 +48,7 @@ Do everything inside WSL, in your Linux home folder. A checkout under `/mnt/c`
 is slow and its file locking is unreliable. On Ubuntu:
 
 ```bash
-sudo apt update && sudo apt install -y git python3 python3-pytest pipx
+sudo apt update && sudo apt install -y git python3 python3-pytest pipx curl lsof
 pipx install ruff && pipx ensurepath
 curl -fsSL https://claude.ai/install.sh | bash
 ```
@@ -69,8 +73,13 @@ created: 2026-11-12T09:00:00Z
 What you want built, in plain words.
 ```
 
-The factory appends its comments below the body and sets `state: closed` when
-the job merges. You can write these files by hand or use the commands:
+The factory appends its comments below the body, each between a
+`<!-- comment by <name> at <time> -->` line and a `<!-- /comment -->` line, and
+sets `state: closed` when the job merges. To answer a question the factory
+asked, type your reply at the end of the file, below the last
+`<!-- /comment -->`, or use `factory/bin/job answer`. A file the factory can't
+read is skipped with a warning; other files in the folder are ignored. You can
+write issue files by hand or use the commands:
 
 ```bash
 factory/bin/job issues                 # list issues: number, state, labels, title
@@ -94,9 +103,16 @@ machine, not part of the project.
   on it.
 - **ESCALATE** posts the decision on the issue and labels it
   `factory:needs-human`. To approve by hand, merge the branch into the base and
-  push; the next `factory/bin/job queue` moves the job to `merged`.
+  push; the next `factory/bin/job queue` moves the job to `merged`. If you
+  squash or rebase instead, git can't trace the result back to the branch:
+  tell the factory with `factory/bin/job mark-merged <job> <sha>`.
 - `merge_method` still applies: `merge` makes a merge commit, `squash` a single
-  commit, and `rebase` fast-forwards the base to the synced branch.
+  commit, and `rebase` fast-forwards the base to the synced branch (which may
+  itself contain a merge of the base; no commits are rewritten).
+- If the base moves while a job merges, the factory syncs and gates again, up
+  to three times. A merge that still fails waits in `needs-human`;
+  `factory/bin/job merge <job>` retries it without a new round.
+- Your own checkout is never touched: run `git pull` in it to see what merged.
 
 Everything else is unchanged: the stages, the gate, risk routing, the review
 rounds and the files in `factory/jobs/`. The dashboard works as before; job
@@ -126,3 +142,21 @@ factory/local-setup.sh ~/factory-demo --tracker kata
 ```
 
 Kata refs are short ids such as `2f2b`. Browse the issues with `kata tui`.
+
+## Adding a tracker or a host
+
+`factory/bin/job` reaches the outside world through two sets of small classes,
+and nothing else in the factory names a tool:
+
+- A **tracker** holds issues: `whoami`, `get`, `queued`, `rows`, `comment`,
+  `label`, `close`, `create`, `edited_after_label`. See `GitHubTracker`,
+  `FilesTracker` and `KataTracker`.
+- A **host** merges code: `find_change`, `open_change`, `landed`, `comment`,
+  `close`, `merge`, `where`. See `GitHubHost` and `LocalHost`.
+
+For GitLab, write `GitLabTracker` and `GitLabHost` on top of `glab` or the REST
+API (issues are addressed by `iid`, "Closes #n" works in a merge request, and
+`merge` returns `"waiting"` when a pipeline has to pass first), add them to
+`TRACKERS` and `HOSTS`, and set `"tracker": "gitlab", "host": "gitlab"`. The
+tests in `factory/tests/` run against the files tracker and the local host;
+copy the ones that matter for a new pair.
