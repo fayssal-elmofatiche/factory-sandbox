@@ -58,3 +58,56 @@ def test_events_sorted_by_day():
     r.add_event(Event("late", "Late", date(2026, 12, 1), capacity=5))
     r.add_event(Event("early", "Early", date(2026, 11, 1), capacity=5))
     assert [e.id for e in r.events()] == ["early", "late"]
+
+
+@pytest.fixture
+def full_registry(registry) -> Registry:
+    for email in ["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"]:
+        registry.register("e1", email)
+    return registry
+
+
+def test_waitlist_position_counts_from_one(full_registry):
+    assert full_registry.waitlist_position("e1", "c@x.com") == 1
+    assert full_registry.waitlist_position("e1", "d@x.com") == 2
+    assert full_registry.waitlist_position("e1", "e@x.com") == 3
+
+
+def test_waitlist_position_is_none_when_confirmed(full_registry):
+    assert full_registry.waitlist_position("e1", "a@x.com") is None
+
+
+def test_waitlist_position_refuses_unregistered_email(full_registry):
+    with pytest.raises(RegistrationError, match="not registered"):
+        full_registry.waitlist_position("e1", "nobody@x.com")
+
+
+def test_waitlist_position_refuses_unknown_event(full_registry):
+    with pytest.raises(RegistrationError):
+        full_registry.waitlist_position("nope", "a@x.com")
+
+
+def test_waitlist_position_normalises_email(full_registry):
+    assert full_registry.waitlist_position("e1", "  C@X.com ") == 1
+
+
+def test_waitlist_position_leaves_lists_unchanged(full_registry):
+    event = full_registry.event("e1")
+    confirmed, waitlist = list(event.confirmed), list(event.waitlist)
+    full_registry.waitlist_position("e1", "d@x.com")
+    full_registry.waitlist_position("e1", "a@x.com")
+    assert event.confirmed == confirmed
+    assert event.waitlist == waitlist
+
+
+def test_waitlist_position_moves_up_after_promotion(full_registry):
+    full_registry.cancel("e1", "a@x.com")
+    assert full_registry.waitlist_position("e1", "c@x.com") is None
+    assert full_registry.waitlist_position("e1", "d@x.com") == 1
+    assert full_registry.waitlist_position("e1", "e@x.com") == 2
+
+
+def test_waitlist_position_moves_up_after_waitlisted_cancel(full_registry):
+    full_registry.cancel("e1", "c@x.com")
+    assert full_registry.waitlist_position("e1", "d@x.com") == 1
+    assert full_registry.waitlist_position("e1", "e@x.com") == 2

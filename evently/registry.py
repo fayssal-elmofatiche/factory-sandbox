@@ -73,3 +73,13 @@ class Registry:
             event.confirmed.append(promoted)
             return promoted
         return None
+
+    def waitlist_position(self, event_id: str, email: str) -> int | None:
+        """Return an email's 1-based waitlist position, or None if it is confirmed."""
+        event = self.event(event_id)
+        email = email.strip().lower()
+        if email in event.waitlist:
+            return event.waitlist.index(email) + 1
+        if email in event.confirmed:
+            return None
+        raise RegistrationError(f"{email} is not registered")
