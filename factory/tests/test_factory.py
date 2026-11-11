@@ -2,7 +2,8 @@
 
 Run with `python3 -m pytest factory/tests -q`. These tests are not part of
 factory/checks.sh: a job can't change the factory (the gate guards it), so a
-job's gate doesn't need to re-test it. CI runs them on every pull request.
+job's gate doesn't need to re-test it. Run them before merging a change to the
+factory itself.
 
 Each test gets a throwaway copy of this working tree with the files tracker
 and a bare `origin` on disk. The agents' files are written by hand, so the

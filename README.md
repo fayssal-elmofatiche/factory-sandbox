@@ -152,7 +152,7 @@ factory/bin/job merge <job>          # retry a merge that failed
 ```
 
 The factory's own scripts have tests: `python3 -m pytest factory/tests -q`.
-CI runs them, and `factory/checks.sh`, on every pull request.
+Run them, and `bash factory/checks.sh`, before merging a change to the factory itself.
 
 ## Running it without GitHub
 
