@@ -16,6 +16,18 @@ Usage:
   fx unqueue <issue>   remove that label
   fx status            jobs, and what the next run would do
   fx watch             show job files as they are written (Ctrl-C to stop)
+
+When a job waits for you (the "Needs human" column):
+  fx show <job>        the decision, the change and your options
+  fx approve <job>     approve it: the factory runs the checks again and merges
+  fx feedback <job> [words]   send it back to work with your instructions
+  fx reject <job> [words]     drop it, with your reason
+  fx retry <job>       try a failed merge again
+  fx park <job> [words]       stop a running job that is stuck
+
+Words can follow the command, come on stdin, or be typed in your editor.
+<job> is a job id or its issue number.
+
   fx baseline          mark the current state as the demo's starting point
   fx reset [--yes]     put a local demo sandbox back to that starting point
 
@@ -281,6 +293,61 @@ def cmd_watch():
         return 0
 
 
+# ---- a person's decisions --------------------------------------------------
+
+
+def words(args, what):
+    """The text for a decision: the rest of the command line, stdin when it is
+    piped, or whatever the person writes in their editor."""
+    if args:
+        return " ".join(args)
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor:
+        print(f"{what} End with Ctrl-D on an empty line.")
+        return sys.stdin.read()
+    import shlex
+    import tempfile
+    with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False) as f:
+        f.write(f"\n# {what}\n# Lines starting with # are ignored. Leave it empty to cancel.\n")
+        path = f.name
+    try:
+        subprocess.run([*shlex.split(editor), path])
+        lines = Path(path).read_text().splitlines()
+    finally:
+        os.unlink(path)
+    return "\n".join(line for line in lines if not line.startswith("#")).strip()
+
+
+def decide(verb, args, what):
+    if not args:
+        die(f"usage: fx {verb} <job> [words]")
+    text = words(args[1:], what)
+    if not text.strip():
+        die("nothing written; nothing changed")
+    code = subprocess.run([str(JOB), verb, args[0]], cwd=REPO, input=text, text=True).returncode
+    if code == 0 and verb == "feedback":
+        print("Run ./fx run to put the factory back to work on it.")
+    return code
+
+
+def cmd_approve(args):
+    yes = "--yes" in args
+    args = [a for a in args if a != "--yes"]
+    if len(args) != 1:
+        die("usage: fx approve <job> [--yes]")
+    if job("show", args[0]):
+        return 1
+    if not yes:
+        if not sys.stdin.isatty():
+            die("approving merges code; pass --yes to do it without a prompt")
+        if input("\nApprove and merge this job? [y/N] ").strip().lower() not in {"y", "yes"}:
+            print("Nothing changed.")
+            return 0
+    return job("approve", args[0])
+
+
 # ---- baseline and reset ----------------------------------------------------
 
 
@@ -393,6 +460,18 @@ def main(argv):
         return cmd_status()
     if cmd == "watch":
         return cmd_watch()
+    if cmd == "show" and len(args) == 1:
+        return job("show", args[0])
+    if cmd == "approve":
+        return cmd_approve(args)
+    if cmd == "retry" and len(args) == 1:
+        return job("merge", args[0])
+    if cmd == "feedback":
+        return decide("feedback", args, "What should change? Your words go to the builder.")
+    if cmd == "reject":
+        return decide("reject", args, "Why is this job dropped? Your reason is posted on the issue.")
+    if cmd == "park":
+        return decide("park", args, "Why is this job stopped? Your reason is posted on the issue.")
     if cmd == "baseline":
         return cmd_baseline()
     if cmd == "reset":

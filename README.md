@@ -113,6 +113,12 @@ factory's own scripts and adds no factory logic.
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
+| `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
+| `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
+| `./fx feedback <job>` | Sends it back to work with your instructions |
+| `./fx reject <job>` | Drops it, with your reason |
+| `./fx retry <job>` | Tries a failed merge again |
+| `./fx park <job>` | Stops a running job that is stuck |
 | `./fx baseline` | Marks the current state as a demo's starting point |
 | `./fx reset` | Puts a local demo sandbox back to that starting point |
 
@@ -141,15 +147,20 @@ Code's default permissions you approve each new kind of command once, in the
 main session; `.claude/settings.json` denies the few things nobody should do
 (merging a PR by hand, pushing to `main`, editing `job.json`).
 
-When a job needs you:
+When a job lands in the dashboard's "Needs human" column, open its card: it
+shows why, and the commands for your options with a copy button each.
 
 ```bash
-factory/bin/job show <job>           # the decision, the diff and your options
-factory/bin/job feedback <job>       # send it back to work, your words on stdin
-factory/bin/job reject <job>         # drop it, your reason on stdin
-factory/bin/job park <job>           # stop a running job that is stuck
-factory/bin/job merge <job>          # retry a merge that failed
+./fx show <job>         # the decision, the change and your options
+./fx approve <job>      # approve it: the factory runs the checks again and merges
+./fx feedback <job>     # send it back to work; you write what should change
+./fx reject <job>       # drop it; you write the reason
+./fx retry <job>        # try a failed merge again
 ```
+
+Approving never skips the checks. `fx approve` only takes a job whose tip is a
+commit the gate has passed, syncs it with `main`, runs the gate again and
+merges. On GitHub you can still approve by merging the pull request yourself.
 
 The factory's own scripts have tests: `python3 -m pytest factory/tests -q`.
 Run them, and `bash factory/checks.sh`, before merging a change to the factory itself.

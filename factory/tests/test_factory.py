@@ -444,6 +444,72 @@ def test_auto_merge_off_leaves_the_merge_to_a_person(sb):
     assert sb.state(job_id)["stage"] == "merged"
 
 
+def escalated(sb):
+    job_id = sb.to_review()
+    sb.review(job_id)
+    sb.job("advance", job_id, "approve")
+    sb.decide(job_id, "ESCALATE")
+    sb.job("advance", job_id, "needs-human")
+    return job_id
+
+
+def test_a_person_approves_an_escalated_job_and_the_factory_merges_it(sb):
+    job_id = escalated(sb)
+    assert f"job approve {job_id}" in sb.job("queue").stdout
+    assert f"factory/bin/job approve {job_id}" in sb.job("show", job_id).stdout
+    sb.move_base()
+    sb.job("approve", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "merged" and s["human_approved"] == "Op"
+    assert "# change" in sb.base_file("evently/seed.py")
+    d = sb.dir(job_id)
+    decision = (d / "decision.md").read_text()
+    assert decision.startswith("APPROVE") and "Approved by @Op" in decision
+    assert (d / "decision-1.md").read_text().startswith("ESCALATE")
+    assert (d / "round-1" / "merge-checks.md").read_text().startswith("GATE: PASS")
+
+
+def test_approval_works_with_auto_merge_off(sb):
+    config = sb.repo / "factory" / "config.json"
+    data = json.loads(config.read_text())
+    data["auto_merge"] = False
+    config.write_text(json.dumps(data))
+    job_id = sb.to_approved()
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    sb.job("approve", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+def test_a_job_that_never_passed_the_gate_cannot_be_approved(sb):
+    job_id = sb.to_build()
+    sb.job("park", job_id, stdin="stuck")
+    res = sb.job("approve", job_id, check=False)
+    assert res.returncode == 1 and "passed the gate" in res.stderr
+    assert sb.state(job_id)["stage"] == "needs-human"
+
+
+def test_a_commit_added_after_the_gate_cannot_be_approved(sb):
+    job_id = escalated(sb)
+    sb.commit(job_id, path="evently/web.py", text="BACKDOOR = True\n", push=False)
+    assert sb.job("approve", job_id, check=False).returncode == 1
+    assert "BACKDOOR" not in sb.base_file("evently/web.py")
+
+
+def test_feedback_after_an_approval_attempt_starts_clean(sb):
+    job_id = escalated(sb)
+    hook = sb.origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nwhile read old new ref; do\n"
+                    "[ \"$ref\" = refs/heads/main ] && exit 1\ndone\nexit 0\n")
+    hook.chmod(0o755)
+    sb.job("approve", job_id, check=False)
+    assert sb.state(job_id)["stage"] == "needs-human" and sb.state(job_id)["merge_failed"]
+    hook.unlink()
+    sb.job("feedback", job_id, stdin="one more change")
+    s = sb.state(job_id)
+    assert s["stage"] == "build" and not s["human_approved"] and not s["merge_failed"]
+
+
 # ---- M5: a way out, and steps that can run twice ---------------------------------
 
 

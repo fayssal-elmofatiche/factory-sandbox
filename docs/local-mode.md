@@ -102,8 +102,10 @@ machine, not part of the project.
   then syncs and gates again. The issue is then closed, with the merge commit noted
   on it.
 - **ESCALATE** posts the decision on the issue and labels it
-  `factory:needs-human`. To approve by hand, merge the branch into the base and
-  push; the next `factory/bin/job queue` moves the job to `merged`. This works
+  `factory:needs-human`. To approve, run `./fx approve <job>`: the factory
+  syncs the branch with the base, runs the gate again, merges and pushes. You
+  can also merge the branch into the base and push by hand; the next
+  `factory/bin/job queue` moves the job to `merged`. This works
   for a branch that has passed the gate, merged with a merge commit or a
   fast-forward.
   For anything else (a squash, a rebase, a branch that never passed the

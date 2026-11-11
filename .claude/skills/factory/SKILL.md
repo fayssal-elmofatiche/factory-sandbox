@@ -206,9 +206,10 @@ then moves the job to `merged`; stop any agents still running for it.
 3. Each time a job finishes, run `factory/bin/job queue` again and start its
    `resume` lines you aren't already running and its `new` lines.
 4. When nothing is queued or running, print `factory/bin/job summary <ids>`
-   for the jobs this run touched, then list what waits on a human: PRs to
-   review (merge one to approve it, or give feedback with `/factory`) and
-   questions waiting on authors.
+   for the jobs this run touched, then list what waits on a human: jobs to
+   decide (`./fx show <id>` shows one; `./fx approve <id>`, `./fx feedback
+   <id>` or `./fx reject <id>` decides it, and so does telling you with
+   `/factory`) and questions waiting on authors.
 
 **Resuming.** State lives in files, so a new session picks up where a dead one
 stopped. For a `resume` job, run its stage's step again: `intake` and `spec`
@@ -256,6 +257,11 @@ new feature, ask.
   and continue like any job. A job that was parked during `intake` or `spec`
   goes back to that stage instead: respawn that agent and add
   `Read feedback-<k>.md first.` to its prompt.
+- **Approving a `needs-human` job** ("approve it", "merge it", "looks fine"):
+  `factory/bin/job approve <id>`. It takes only a job whose tip is the commit
+  the gate passed, records who approved, syncs with the base, runs the gate
+  again and merges. If it refuses, tell them why in its words; never merge
+  another way.
 - **Retrying a merge that failed**: when `factory/bin/job queue` says
   `merge failed: retry`, and they want it retried, run
   `factory/bin/job merge <id>` again. No new round is needed.

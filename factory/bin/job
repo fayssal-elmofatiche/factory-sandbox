@@ -22,6 +22,7 @@ Usage:
   job create <issue>             new job for an open `factory` issue; prints the job id
   job advance <job> <stage>      move a job to <stage>, or refuse
   job merge <job>                APPROVE → sync with the base branch, gate, merge; also retries a failed merge
+  job approve <job>              needs-human → you approve it: the factory merges the commit the gate passed
   job feedback <job>             needs-human → back to work, with your feedback (stdin) as feedback-<k>.md
   job reject <job>               needs-info or needs-human → rejected, with your reason (stdin) as rejection.md
   job park <job>                 any running stage → needs-human, with your reason (stdin)
@@ -1144,8 +1145,17 @@ def advance(job, stage, park=False):
 
     elif old == "needs-human":
         origin = job.get("parked_from")
-        if stage == "merging":
-            require(job.get("merge_failed"), "only a job whose merge failed can retry it; use `job feedback`")
+        if stage == "merging" and job.get("human_approved"):
+            # A person approved what the factory escalated. Their approval becomes
+            # the decision; the escalation stays as decision-<k>.md.
+            kept = archive(job, "decision.md")
+            (d / "decision.md").write_text(
+                f"APPROVE\n\n## Summary\n- Approved by @{job['human_approved']} on {now()}, after the factory "
+                f"escalated the job (see {kept}).\n- The factory merges {job['gated_sha'][:7]}, the commit the "
+                f"gate passed in round {job['round']}.\n")
+        elif stage == "merging":
+            require(job.get("merge_failed"), "only a job whose merge failed can retry it; use `job approve` "
+                    "to approve an escalated job, or `job feedback` to send it back")
             # Put the approver's decision back; the failure note stays as decision-<k>.md.
             approved = job.get("approved_decision")
             archive(job, "decision.md")
@@ -1170,6 +1180,7 @@ def advance(job, stage, park=False):
                 job["round_limit"] = job["round"] + CONFIG["max_rounds"]
                 next_round(job)
             archive(job, "decision.md")
+            job["human_approved"] = None
         job["merge_failed"] = False
         job["parked_from"] = None
         label(job["issue"], remove=LABELS["needs_human"])
@@ -1260,6 +1271,7 @@ def cmd_queue():
         elif j["stage"] == "needs-human":
             where = HOST.where(j)
             hint = (f"merge failed: retry with `job merge {j['id']}`, or give feedback" if j.get("merge_failed")
+                    else f"approve with `job approve {j['id']}`, or give feedback" if j.get("gated_sha")
                     else f"merge {where}{' and push' if LOCAL else ''}, or give feedback" if where
                     else "give feedback")
             other_rows.append(("wait", n, j["id"], j["stage"], hint))
@@ -1289,9 +1301,25 @@ def cmd_queue():
         print("\t".join(str(c) for c in row))
 
 
+def cmd_approve(job):
+    """A person approves a job the factory escalated. The factory then merges
+    it the usual way: sync with the base, gate again, merge. Only a commit the
+    gate has passed can be approved, so the checks are never skipped."""
+    if job["stage"] != "needs-human":
+        die(f"{job['id']} is in {job['stage']}, not needs-human")
+    head = head_of(job)
+    require(job.get("gated_sha") and head in {job["gated_sha"], job.get("synced_sha")},
+            f"{job['id']} has no commit that passed the gate at its tip "
+            f"(tip {(head or 'missing')[:7]}, gated {(job.get('gated_sha') or 'nothing')[:7]}). "
+            f"Send it back with `job feedback`, or drop it with `job reject`")
+    job["human_approved"] = operator()
+    event(job, "approve", by=job["human_approved"])
+    cmd_merge(job)
+
+
 def cmd_merge(job):
     sync(job)
-    if job["stage"] == "needs-human" and job.get("merge_failed"):
+    if job["stage"] == "needs-human" and (job.get("merge_failed") or job.get("human_approved")):
         save(advance(job, "merging"))
     if job["stage"] == "approve":
         save(advance(job, "merging"))
@@ -1338,7 +1366,7 @@ def cmd_merge(job):
                         f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}", retry=False)
         try:
             git(job, "push", "origin", job["branch"])
-            if not CONFIG.get("auto_merge", True):
+            if not CONFIG.get("auto_merge", True) and not job.get("human_approved"):
                 return fail(f"Approved, gated and synced with {BASE}. `auto_merge` is off in config.json, so a "
                             f"person merges: merge {HOST.where(job)}{' and push' if LOCAL else ''}. "
                             f"The next `job queue` records it.", retry=False)
@@ -1442,8 +1470,10 @@ def cmd_show(job):
     if job["stage"] == "needs-human":
         if job.get("merge_failed"):
             print(f"  factory/bin/job merge {job['id']}        retry the merge")
-        elif HOST.where(job):
-            print(f"  merge {HOST.where(job)}{' and push' if LOCAL else ''}        approve; `job queue` records it")
+        elif job.get("gated_sha") and head_of(job) in {job["gated_sha"], job.get("synced_sha")}:
+            print(f"  factory/bin/job approve {job['id']}      approve it: the factory gates again and merges")
+        else:
+            print("  (it can't be approved as it is: no commit at its tip has passed the gate)")
         print(f"  factory/bin/job feedback {job['id']}     send it back to work, your words on stdin")
         print(f"  factory/bin/job reject {job['id']}       drop it, your reason on stdin")
     elif job["stage"] == "needs-info":
@@ -1533,6 +1563,8 @@ def main(argv):
             print(f"{job['id']}: {job['stage']} (round {job['round']})")
         elif cmd == "merge" and len(args) == 1:
             cmd_merge(resolve(args[0]))
+        elif cmd == "approve" and len(args) == 1:
+            cmd_approve(sync(resolve(args[0])))
         elif cmd == "feedback" and len(args) == 1:
             cmd_feedback(resolve(args[0]), text)
         elif cmd == "reject" and len(args) == 1:
