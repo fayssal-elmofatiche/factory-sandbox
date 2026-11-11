@@ -94,14 +94,18 @@ runs are in `factory/checks.sh`.
 
 ## Running it without GitHub
 
-The factory also runs fully locally: issues in kata (a local issue tracker), no
-pull requests, and an `origin` on disk. One command sets it up:
+The factory also runs fully locally, with nothing to sign in to except Claude:
+issues are Markdown files, there are no pull requests, and `origin` is a folder
+on disk. It works on macOS, Linux and Windows with WSL.
 
 ```bash
-factory/local-setup.sh ~/dev/factory-sandbox-local
+factory/local-setup.sh ~/factory-demo
+cd ~/factory-demo && claude        # then type: /factory run
 ```
 
-See [docs/local-mode.md](docs/local-mode.md) for what changes and what you give up.
+The setup adds three demo issues, one of them queued. See
+[docs/local-mode.md](docs/local-mode.md) for the prerequisites, the WSL steps
+and what changes in the pipeline.
 
 ## What was changed from upstream
 
@@ -109,8 +113,8 @@ See [docs/local-mode.md](docs/local-mode.md) for what changes and what you give 
   its security rules (escape HTML, treat emails as personal data, bind to
   localhost) and its style tokens.
 - `factory/checks.sh` runs ruff and pytest.
-- Local mode: `factory/bin/job` gains a `tracker` switch and the commands
-  `answer` and `new-issue`; the skill, the builder and the approver each gain a
+- Local mode: `factory/bin/job` gains a `tracker` switch (`github`, `files`,
+  `kata`) and the commands `answer`, `new-issue`, `issues`, `label` and `unlabel`; the skill, the builder and the approver each gain a
   short note. With the default tracker the factory behaves as upstream does.
 - `factory/config.json`: a price entry for `claude-fable-5-2`.
 

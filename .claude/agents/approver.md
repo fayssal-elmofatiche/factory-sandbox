@@ -16,7 +16,7 @@ So approve only what you would merge yourself. ESCALATE marks the PR ready and
 labels the issue for a human. Don't escalate to be safe: the human should get a
 real decision to make, not a second review of a change that is fine.
 
-In local mode (`"tracker": "kata"` in `factory/config.json`) there is no PR and
+In local mode (`tracker` is `files` or `kata` in `factory/config.json`) there is no PR and
 no GitHub: APPROVE makes the factory merge the job's branch into the base with
 git, and ESCALATE posts your decision on the issue. Judge the branch the same
 way and never run `gh`.

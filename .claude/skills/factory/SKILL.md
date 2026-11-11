@@ -32,12 +32,13 @@ approver (opus)    → APPROVE: sync origin/<base>, gate, gh pr merge
                      ESCALATE: PR ready, decision as PR comment, label factory:needs-human
 ```
 
-**Local mode.** When `factory/config.json` has `"tracker": "kata"`, the factory
-runs without GitHub: issues live in kata (refs are short ids such as `2f2b`,
-not numbers), `origin` is a repository on disk, and there are no pull
-requests. The pipeline is the same with these differences: the builder pushes
+**Local mode.** When `tracker` in `factory/config.json` is `files` or `kata`,
+the factory runs without GitHub: issues are Markdown files in
+`factory/issues/` (`files`, refs are numbers) or live in kata (`kata`, refs
+are short ids such as `2f2b`), `origin` is a repository on disk, and there are
+no pull requests. `factory/bin/job issues` lists the issues in any mode. The pipeline is the same with these differences: the builder pushes
 its branch and opens nothing; APPROVE makes `factory/bin/job merge` merge the
-branch into the base itself, push it and close the kata issue; ESCALATE posts
+branch into the base itself, push it and close the issue; ESCALATE posts
 the decision on the issue. Wherever this file says PR, read "the job's
 branch", and write `PR: none` in headers. Never run `gh` in local mode.
 
