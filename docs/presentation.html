@@ -94,10 +94,11 @@ code { font-family: var(--code); font-size: .9em; background: color-mix(in srgb,
 #panel.swap { animation: plate .5s var(--out); }
 @keyframes plate { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 h1, h2 { font-family: var(--display); font-weight: 700; margin: 0; letter-spacing: -.015em; text-wrap: balance; }
-h1 { font-size: clamp(2.8rem, 6.6vw, 6rem); line-height: .98; }
+h1 { font-size: clamp(2.6rem, min(7vw, 13vh), 6rem); line-height: 1; }
 h2 { font-size: clamp(1.7rem, 2.9vw, 2.9rem); line-height: 1.04; margin-bottom: .55em; }
 p { margin: 0 0 .7em; max-width: 60ch; }
-.sub { font-family: var(--display); font-size: clamp(1.15rem, 2vw, 1.9rem); color: var(--muted); margin-top: .7em; }
+.sub { font-family: var(--display); font-size: clamp(1.15rem, 2vw, 1.9rem); line-height: 1.25; color: var(--muted); margin-top: .7em; max-width: 34em; }
+.sub.small { font-size: 1.05rem; margin-top: 1.1em; }
 .kicker { font-family: var(--display); color: var(--muted); font-size: 1.05rem; margin-bottom: .35em; }
 .big { font-family: var(--display); font-size: 1.55rem; line-height: 1.15; margin: 0 0 .25em; }
 .dim { color: var(--muted); }
@@ -354,9 +355,9 @@ const ALL = [2760, 1260, 5500]
 // Content
 // ====================================================================
 const STATIONS = [
-  { id: 'Intake', kind: 'an agent on the strongest model', does: 'Is this worth building, and at what scope? Intake accepts, asks a question or rejects, and rates the risk.', reads: '<code>issue.md</code> and the code', writes: '<code>intake.md</code>' },
+  { id: 'Intake', kind: 'an agent on the strongest model', does: 'Decides whether the issue is worth building, and at what scope. It accepts, asks a question or rejects, and it rates the risk.', reads: '<code>issue.md</code> and the code', writes: '<code>intake.md</code>' },
   { id: 'Route', kind: 'a script', does: 'Looks the risk rating up in a table and picks the reviewers. The same rating always gives the same reviewers.', reads: 'the rating, <code>config.json</code>', writes: 'the reviewer set' },
-  { id: 'Spec', kind: 'an agent', does: 'Turns the accepted scope into numbered, testable acceptance criteria. Everyone after this is measured against them.', reads: '<code>issue.md</code>, <code>intake.md</code>', writes: '<code>spec.md</code>' },
+  { id: 'Spec', kind: 'an agent', does: 'Turns the accepted scope into numbered acceptance criteria that can be tested. The builder, the reviewers and the approver all work from them.', reads: '<code>issue.md</code>, <code>intake.md</code>', writes: '<code>spec.md</code>' },
   { id: 'Build', kind: 'an agent', does: 'Implements the spec on its own branch, in its own working copy, and tests it.', reads: '<code>spec.md</code>', writes: 'commits and <code>build.md</code>' },
   { id: 'Gate', kind: 'a script', does: 'Runs the checks from main against the branch. A branch that fails, or edits a protected file, does not pass.', reads: 'the branch, <code>checks.sh</code> from main', writes: '<code>checks.md</code>' },
   { id: 'Review', kind: 'agents, chosen by risk', does: 'Up to four reviewers work in parallel. The job waits for all of them.' },
@@ -461,8 +462,8 @@ const STAGES = ['intake', 'needs-info', 'spec', 'build', 'gate', 'review', 'appr
 const ALARM_TEXT = [
   ['The issue is unclear', 'Intake posts its question on the issue and waits. Answer it, and the job resumes.'],
   ['The request does not belong', 'Intake rejects it and says why. Nothing is built.'],
-  ['The builder is blocked', 'It says what it needs and stops. It does not guess.'],
-  ['Three rounds were not enough', 'Build, gate and review may repeat three times. After that a person decides, not round four.'],
+  ['The builder is blocked', 'It writes down what it needs and stops.'],
+  ['Three rounds were not enough', 'Build, gate and review may repeat three times. After the third round a person decides.'],
   ['The approver escalates', 'Each project lists what a person must always see. Here: anything that exposes or exports attendee emails.'],
   ['The merge is not clean', 'A conflict, or checks that fail after syncing with main, stops at a person.'],
 ]
@@ -477,7 +478,7 @@ const legalMove = () => state.to && (MOVES[`${state.from}>${state.to}`] || (stat
 
 const SLIDES = [
   { name: 'Start', side: 'bare', frame: ALL,
-    html: () => `<h1>Issues in.<br>Tested, reviewed changes out.</h1><p class="sub">A software factory built on Claude Code. Press → to walk the line.</p>`,
+    html: () => `<h1>The AI software factory</h1><p class="sub">How an issue becomes a tested and reviewed change. Agents do the work, and scripts decide whether it may pass.</p><p class="sub small">Press → to start.</p>`,
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
 
   { name: 'The problem', side: 'left', frame: [2300, 400, 2400], steps: 3,
@@ -485,7 +486,7 @@ const SLIDES = [
     board: (s) => { cl('vignette', 'hide', false); for (let i = 0; i <= s; i++) lampSet('v' + i, 'trip') } },
 
   { name: 'The line', side: 'top', frame: ALL,
-    html: () => `<h2>Split the work. Fix the route. Keep the paperwork.</h2>
+    html: () => `<h2>Every job takes the same route through eight stations</h2>
       <div class="legend"><span><i class="c"></i>An agent does the work</span><span><i></i>A script decides whether the job may pass</span></div>`,
     board: () => runLine({ code: 'Haiku' }) },
 
@@ -496,16 +497,16 @@ const SLIDES = [
     board: (s) => reach(s, FULL) },
 
   { name: 'Handover', side: 'bottom', frame: [2760, 1130, 5200], steps: 7,
-    html: (s) => `<div class="doc"><div><h2>Agents never talk to each other. They hand over files.</h2>
-      <p class="dim">The real files from the first job this factory ran.</p>${keys('file', FILES.map(([n], i) => [i, n]), (v) => +v === s)}</div><pre tabindex="0">${FILES[s][1].replace(/</g, '&lt;')}</pre></div>`,
+    html: (s) => `<div class="doc"><div><h2>Agents pass files to each other and never talk directly</h2>
+      <p class="dim">These are the files from the first job this factory ran.</p>${keys('file', FILES.map(([n], i) => [i, n]), (v) => +v === s)}</div><pre tabindex="0">${FILES[s][1].replace(/</g, '&lt;')}</pre></div>`,
     board: (s) => { cl('tags', 'hide', false); cl('tag-' + s, 'on', true); live(9); feeders({ code: 'Haiku' }, true) } },
 
   { name: 'The interlock', side: 'top', frame: [2760, 1152, 5800],
     html: () => { const why = legalMove()
-      return `<h2>A script holds the state, and it says no</h2>
+      return `<h2>A script holds each job's state and refuses illegal moves</h2>
       <div class="pair"><div><p class="field">The job is in</p>${keys('from', STAGES.slice(0, 9).map((s) => [s]), (v) => v === state.from)}</div>
       <div><p class="field">Try to move it to</p>${keys('to', STAGES.filter((s) => s !== state.from).map((s) => [s]), (v) => v === state.to)}</div></div>
-      <div class="readout ${!state.to ? '' : why ? 'ok' : 'no'}">${!state.to ? '<b>Pick a destination</b>The green rings are the only legal moves. Try one that is not.'
+      <div class="readout ${!state.to ? '' : why ? 'ok' : 'no'}">${!state.to ? '<b>Pick a destination</b>The green rings mark the legal moves. Any other choice is refused.'
         : why ? `<b>Allowed, on one condition</b>Only if ${why}` : `<b>Refused</b><code>job: 001: ${state.from} → ${state.to} is not a legal transition</code>`}</div>` },
     board: () => { cl('ring-' + state.from, 'from', true)
       STAGES.forEach((s) => { if (MOVES[`${state.from}>${s}`]) cl('ring-' + s, 'legal', true) })
@@ -513,9 +514,9 @@ const SLIDES = [
 
   { name: 'The gate', side: 'left', frame: [2700, 1250, 1750],
     html: () => { const g = state.gate
-      const [c, t, d] = g.checks ? ['no', 'Tripped', 'A protected file changed. The edit had no effect anyway: the gate runs the copy of the checks from main.']
+      const [c, t, d] = g.checks ? ['no', 'Tripped', 'A protected file changed. The edit also had no effect, because the gate runs the copy of the checks from main.']
         : g.fail ? ['no', 'Tripped', 'The checks fail. The builder gets the log, and no reviewer is started.']
-        : g.weak ? ['warn', 'Closed, and this is the gate\'s limit', 'A script cannot tell an honest test change from a weakened one. The code reviewer is told to catch it.']
+        : g.weak ? ['warn', 'Closed. The gate cannot catch this', 'A script cannot tell an honest test change from a weakened one, so the code reviewer is told to look for it.']
         : ['ok', 'Closed', 'The checks pass and no protected file changed. Reviewers start.']
       return `<h2>The branch cannot change the checks it is judged by</h2><p class="field">On this branch, the builder</p>
       ${keys('gate', [['fail', 'breaks a test'], ['checks', 'edits checks.sh'], ['weak', 'weakens a test']], (v) => g[v])}<div class="readout ${c}"><b>${t}</b>${d}</div>` },
@@ -527,7 +528,7 @@ const SLIDES = [
     html: () => { const n = 1 + (state.surf.has('ui') ? 2 : 0) + (state.surf.has('security') ? 1 : 0)
       return `<h2>Risk decides who reviews</h2><p class="field">Intake rated the risk</p>${keys('risk', [['low'], ['medium'], ['high']], (v) => v === state.risk)}
       <p class="field">The change touches</p>${keys('surf', [['ui', 'the interface'], ['security', 'security or personal data']], (v) => state.surf.has(v))}
-      <div class="readout ok"><b>${n} reviewer${n > 1 ? 's' : ''}${n > 1 ? ', in parallel' : ''}</b>${n === 1 ? (state.risk === 'low' ? 'One reviewer on the cheapest model. A typo fix does not need more.' : 'Still one reviewer, on a stronger model.') : 'The job waits for every one of them. One table in one config file decides this.'}</div>` },
+      <div class="readout ok"><b>${n} reviewer${n > 1 ? 's' : ''}${n > 1 ? ', in parallel' : ''}</b>${n === 1 ? (state.risk === 'low' ? 'A low-risk change gets one reviewer on the cheapest model.' : 'A riskier change still gets one reviewer, on a stronger model.') : 'The job waits for all of them. A table in config.json decides who runs.'}</div>` },
     board: () => { const set = { code: state.risk === 'low' ? 'Haiku' : 'Sonnet' }
       if (state.surf.has('ui')) { set.ux = 'Sonnet'; set.ui = 'Haiku' }
       if (state.surf.has('security')) set.security = 'Opus'
@@ -544,12 +545,12 @@ const SLIDES = [
         <div><b data-n="2">2</b><span>gate runs</span></div><div><b data-n="1.11" data-pre="$">$1.11</b><span>model usage</span></div></div>
         <p>Intake settled two open cases the way the existing code already behaved, and wrote down how to overrule it. The approver ran the tests again before merging.</p>`
       : `<h2>It also stalled once, and that was correct</h2><p class="big">The routing script had no price for a new model.</p>
-        <p>It refused to continue until one was added. A factory that stops when it cannot account for something is doing its job.</p>`,
+        <p>It refused to continue until a price was added to <code>config.json</code>. No job runs on a model whose cost the factory cannot count.</p>`,
     board: (s) => { if (s === 0) runLine({ code: 'Haiku' }, 330); else { live(2); feeders({}, false); packet('route'); lampSet('intake', 'ok'); lampSet('route', 'trip') } } },
 
   { name: 'Local mode', side: 'right', frame: [400, 1200, 1500],
     html: () => { const T = TRACKERS[state.tracker]
-      return `<h2>The same line, with or without a forge</h2><p class="field">Issues come from</p>${keys('tracker', [['github'], ['files'], ['kata']], (v) => v === state.tracker)}
+      return `<h2>The same line runs without GitHub</h2><p class="field">Issues come from</p>${keys('tracker', [['github'], ['files'], ['kata']], (v) => v === state.tracker)}
       <p class="big">${T[0]}</p><p>${T[1]} You need ${T[2]}.</p>
       ${state.tracker === 'github' ? '' : '<p class="dim small">With no pull request, the factory merges the branch itself once the gate has passed again. Git refuses the push if main moved in the meantime.</p>'}` },
     board: () => { cl('sources', 'hide', false); live(1); $('#srcblade').style.transform = `rotate(${TRACKERS[state.tracker][3]}deg)` } },
