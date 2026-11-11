@@ -94,6 +94,9 @@ for path in sorted(pathlib.Path("factory/demo-issues").glob("*.md")):
 PY
 fi
 
+# Remember this state, so `./fx reset` can return to it after a rehearsal.
+if [ "$TRACKER" = files ]; then ./fx baseline >/dev/null; fi
+
 cat <<MSG
 Local sandbox ready (tracker: $TRACKER).
   checkout: $TARGET
@@ -104,5 +107,7 @@ $(factory/bin/job issues | sed 's/^/  /')
 
 Next:
   cd $TARGET
-  claude        # then type: /factory run
+  ./fx doctor   # check this machine can run the factory
+  ./fx up       # dashboard and presentation
+  ./fx run      # Claude Code on /factory run
 MSG
