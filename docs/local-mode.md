@@ -32,8 +32,9 @@ cd ~/factory-demo
 
 `./fx up` starts the dashboard on a free port bound to `127.0.0.1` and prints
 its address. `./fx run` opens Claude Code and types `/factory run`; you watch
-and approve from there. After a rehearsal, `./fx reset` puts the sandbox back
-to its starting point.
+and approve from there. After a rehearsal, `./fx reset` discards the work and
+puts the issues back, and keeps any change you made to the setup. `./fx reset
+--setup` goes all the way back to how the sandbox was made.
 
 The setup script creates two folders: `~/factory-demo`, the working checkout,
 and `~/factory-demo.git`, the bare repository that plays `origin`. It adds

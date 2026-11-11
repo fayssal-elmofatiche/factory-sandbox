@@ -4,3 +4,4 @@ __pycache__/
 /factory/jobs/
 /.worktrees/
 /factory/issues/
+/factory/runs/
