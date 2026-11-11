@@ -54,7 +54,8 @@ def merge_a_job(box, issue="1"):
     job = str(box / "factory" / "bin" / "job")
     job_id = run([job, "create", issue], cwd=box).stdout.strip()
     folder, tree = box / "factory" / "jobs" / job_id, box / ".worktrees" / job_id
-    (folder / "intake.md").write_text("DECISION: ACCEPT\nRISK: low\nSURFACES: none\nRESCOPED: no\n\n## Summary\n- ok\n")
+    (folder / "intake.md").write_text(
+        "DECISION: ACCEPT\nRISK: low\nSURFACES: none\nRESCOPED: no\n\n## Summary\n- ok\n")
     run([str(box / "factory" / "bin" / "route"), job_id], cwd=box)
     run([job, "advance", job_id, "spec"], cwd=box)
     (folder / "spec.md").write_text("# Spec\n")
