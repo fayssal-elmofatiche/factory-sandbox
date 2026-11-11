@@ -40,7 +40,13 @@ assert json.loads(s)["tracker"] == "kata"
 p.write_text(s)
 PY
 
+# kata derives nothing useful from a remote that is a path and refuses to
+# parse one, so bind the project while the checkout has no remote.
+git remote remove origin
 kata init --project "$PROJECT" >/dev/null
+git remote add origin "$ORIGIN"
+git fetch --quiet origin
+git branch --quiet --set-upstream-to="origin/$BASE" "$BASE"
 git add factory/config.json .kata.toml .gitignore
 git commit --quiet -m "Run the factory in local mode (tracker: kata)"
 git push --quiet origin "$BASE"
