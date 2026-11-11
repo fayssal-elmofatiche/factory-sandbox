@@ -34,6 +34,7 @@
     "factory/config.json",
     "factory/worktree-setup.sh",
     "factory/local-setup.sh",
+    "fx",
     ".claude/*",
     "pyproject.toml",
     "conftest.py",

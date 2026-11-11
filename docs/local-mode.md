@@ -16,26 +16,26 @@ The scripts are tested on macOS and on Ubuntu 22.04 and 24.04; on Windows use
 WSL. You need:
 
 - git and Python 3.10 or later, with pytest and ruff
-- optional: the [`agent-browser`](https://github.com/vercel-labs/agent-browser)
-  CLI and a browser, for agents that look at a page. Without it they read the
-  page's HTML instead and say so
 - Claude Code 2.1.257 or later, on a plan that includes Fable (intake runs on it)
+- Optional, for issues that change the web page: the
+  [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI, a
+  browser and `lsof`. The builder and the UX and UI reviewers use them to look
+  at the page. Without them they read the page's HTML instead and say so.
 
 ```bash
 git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
 cd factory-sandbox
 factory/local-setup.sh ~/factory-demo
 cd ~/factory-demo
-claude
+./fx doctor     # check this machine can run the factory
+./fx up         # start the dashboard, open it and the presentation
+./fx run        # open Claude Code on /factory run
 ```
 
-In Claude Code, type `/factory run`. To watch the jobs, open a second terminal:
-
-```bash
-cd ~/factory-demo/factory && python3 -m http.server 8765 --bind 127.0.0.1
-```
-
-Then open `http://localhost:8765/dashboard.html`.
+`./fx up` starts the dashboard on a free port bound to `127.0.0.1` and prints
+its address. `./fx run` opens Claude Code and types `/factory run`; you watch
+and approve from there. After a rehearsal, `./fx reset` puts the sandbox back
+to its starting point.
 
 The setup script creates two folders: `~/factory-demo`, the working checkout,
 and `~/factory-demo.git`, the bare repository that plays `origin`. It adds
@@ -82,8 +82,8 @@ read is skipped with a warning; other files in the folder are ignored. You can
 write issue files by hand or use the commands:
 
 ```bash
-factory/bin/job issues                 # list issues: number, state, labels, title
-factory/bin/job label 2 factory        # queue issue 2; the label is the trigger
+./fx issues                            # list issues: number, state, labels, title
+./fx queue 2                           # queue issue 2; the label is the trigger
 factory/bin/job new-issue "Short imperative title" <<'TXT'
 What you want built.
 TXT
@@ -98,14 +98,17 @@ machine, not part of the project.
 - **The builder** pushes its branch to the local `origin` and opens nothing.
 - **APPROVE** makes `factory/bin/job merge` sync the branch with the base, run
   the gate again, merge the branch into the base and push. The push is the
-  atomic step: git refuses it if the base moved after the sync, and the job
-  goes to `needs-human`. The issue is then closed, with the merge commit noted
+  atomic step: git refuses it if the base moved after the sync, and the factory
+  then syncs and gates again. The issue is then closed, with the merge commit noted
   on it.
 - **ESCALATE** posts the decision on the issue and labels it
   `factory:needs-human`. To approve by hand, merge the branch into the base and
-  push; the next `factory/bin/job queue` moves the job to `merged`. If you
-  squash or rebase instead, git can't trace the result back to the branch:
-  tell the factory with `factory/bin/job mark-merged <job> <sha>`.
+  push; the next `factory/bin/job queue` moves the job to `merged`. This works
+  for a branch that has passed the gate, merged with a merge commit or a
+  fast-forward.
+  For anything else (a squash, a rebase, a branch that never passed the
+  gate), git can't trace the result back to a gated commit: tell the factory
+  with `factory/bin/job mark-merged <job> <sha>`.
 - `merge_method` still applies: `merge` makes a merge commit, `squash` a single
   commit, and `rebase` fast-forwards the base to the synced branch (which may
   itself contain a merge of the base; no commits are rewritten).

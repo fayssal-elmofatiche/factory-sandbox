@@ -73,7 +73,8 @@ if [ "$TRACKER" = kata ]; then
   git branch --quiet --set-upstream-to="origin/$BASE" "$BASE"
   git add .kata.toml .gitignore
 fi
-git commit --quiet -m "Run the factory in local mode (tracker: $TRACKER)"
+# A source that is already in this mode has nothing to commit.
+git diff --cached --quiet || git commit --quiet -m "Run the factory in local mode (tracker: $TRACKER)"
 git push --quiet origin "$BASE"
 
 # Demo issues: the first is labeled `factory`, so the first run has work to do.
@@ -94,6 +95,9 @@ for path in sorted(pathlib.Path("factory/demo-issues").glob("*.md")):
 PY
 fi
 
+# Remember this state, so `./fx reset` can return to it after a rehearsal.
+if [ "$TRACKER" = files ]; then ./fx baseline >/dev/null; fi
+
 cat <<MSG
 Local sandbox ready (tracker: $TRACKER).
   checkout: $TARGET
@@ -104,5 +108,7 @@ $(factory/bin/job issues | sed 's/^/  /')
 
 Next:
   cd $TARGET
-  claude        # then type: /factory run
+  ./fx doctor   # check this machine can run the factory
+  ./fx up       # dashboard and presentation
+  ./fx run      # Claude Code on /factory run
 MSG

@@ -488,12 +488,13 @@ class LocalHost:
         return "local host: there are no pull requests; push the branch and the factory merges it"
 
     def landed(self, job):
-        """True once a commit the factory built, gated or merged is on
-        origin/<base>. A branch that merely caught up with the base carries
-        none of those, so it never counts as landed."""
+        """True once `job merge` merged the job, or a person merged a commit
+        the gate had passed. Only a gated commit counts: a branch that merely
+        caught up with the base has landed nothing, and neither has one that
+        never passed the gate (`job mark-merged` records those by hand)."""
         if job.get("merged_sha"):
             return True
-        marks = [job.get(k) for k in ("pending_merge_sha", "synced_sha", "gated_sha", "built_sha")]
+        marks = [job.get(k) for k in ("pending_merge_sha", "synced_sha", "gated_sha")]
         marks = [m for m in marks if m]
         if not marks:
             return False

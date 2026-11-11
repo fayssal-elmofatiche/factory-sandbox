@@ -44,7 +44,7 @@ python3 -m pytest -q
 `/factory run` builds every open GitHub issue labeled `factory` through
 intake → spec → build → gate → review → approve, one PR per issue. State is in
 `factory/jobs/` (gitignored); `factory/bin/job` is its only writer. Checks:
-`factory/checks.sh`. Dashboard: `cd factory && python3 -m http.server 8765 --bind 127.0.0.1`,
+`factory/checks.sh`. Dashboard: `./fx up`, or `cd factory && python3 -m http.server 8765 --bind 127.0.0.1`,
 then open http://localhost:8765/dashboard.html.
 
 A job may not change the factory (`factory/bin/`, `.claude/`), the checks'
