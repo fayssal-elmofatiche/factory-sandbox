@@ -301,13 +301,16 @@ def cmd_baseline():
     if sh("git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != base:
         die(f"switch to {base} first")
     sh("git", "tag", "-f", TAG, check=True)
-    snap = state_dir() / "baseline-issues"
-    shutil.rmtree(snap, ignore_errors=True)
-    issues = FACTORY / "issues"
-    if issues.exists():
-        shutil.copytree(issues, snap)
+    # The issue files and the finished job records belong to the starting point too.
+    counts = {}
+    for name in ("issues", "jobs"):
+        snap = state_dir() / f"baseline-{name}"
+        shutil.rmtree(snap, ignore_errors=True)
+        if (FACTORY / name).exists():
+            shutil.copytree(FACTORY / name, snap, ignore=shutil.ignore_patterns(".lock"))
+        counts[name] = len([p for p in snap.iterdir() if not p.name.startswith(".")]) if snap.exists() else 0
     head = sh("git", "rev-parse", "--short", "HEAD").stdout.strip()
-    print(f"Starting point set at {head}, with {len(list(snap.glob('*.md'))) if snap.exists() else 0} issue file(s).")
+    print(f"Starting point set at {head}, with {counts['issues']} issue file(s) and {counts['jobs']} job record(s).")
     print("./fx reset brings the sandbox back to this state.")
     return 0
 
@@ -322,7 +325,10 @@ def cmd_reset(args):
         die(f"switch to {base} first")
 
     sh("git", "fetch", "origin", check=True)
-    jobs = sorted(p.name for p in (FACTORY / "jobs").iterdir() if p.is_dir()) if (FACTORY / "jobs").exists() else []
+    kept = state_dir() / "baseline-jobs"
+    keep = {p.name for p in kept.iterdir()} if kept.exists() else set()
+    jobs = sorted(p.name for p in (FACTORY / "jobs").iterdir()
+                  if p.is_dir() and p.name not in keep) if (FACTORY / "jobs").exists() else []
     commits = sh("git", "rev-list", "--count", f"{TAG}..origin/{base}").stdout.strip() or "0"
     branches = [b.strip() for b in sh("git", "branch", "--list", "factory/*", "--format=%(refname:short)").stdout.split()]
     remote = [b.split("/", 1)[1] for b in sh("git", "branch", "-r", "--list", "origin/factory/*",
@@ -331,7 +337,7 @@ def cmd_reset(args):
     print(f"  delete {len(jobs)} job record(s): {', '.join(jobs) or 'none'}")
     print(f"  drop {commits} commit(s) from {base}, here and in origin")
     print(f"  delete {len(set(branches) | set(remote))} job branch(es)")
-    print("  restore the issue files to how they were at the starting point")
+    print("  restore the issue files and job records to how they were at the starting point")
     if "--yes" not in args:
         if input("Type yes to continue: ").strip().lower() != "yes":
             print("nothing changed")
@@ -348,6 +354,8 @@ def cmd_reset(args):
     sh("git", "push", "--force", "origin", f"{TAG}^{{commit}}:refs/heads/{base}", check=True)
     sh("git", "fetch", "origin", check=True)
     shutil.rmtree(FACTORY / "jobs", ignore_errors=True)
+    if kept.exists():
+        shutil.copytree(kept, FACTORY / "jobs")
 
     issues, snap = FACTORY / "issues", state_dir() / "baseline-issues"
     source = snap if snap.exists() else FACTORY / "demo-issues"
