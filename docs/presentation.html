@@ -196,6 +196,7 @@ const breaker = (id, x, y, label) => `<g class="station" data-st="${id}" id="st-
 const ring = (id, x, y, r = 118) => `<circle class="ring" id="ring-${id}" cx="${x}" cy="${y}" r="${r}"/>`
 const tag = (i, x, y, name) => `<g class="tag" id="tag-${i}"><line x1="${x}" y1="${y + 52}" x2="${x}" y2="${y + 84}"/><rect x="${x - 122}" y="${y}" width="244" height="52" rx="5"/><text x="${x}" y="${y + 34}">${name}</text></g>`
 
+const ERAS = [['1968', 'THE TERM'], ['1970s', 'JAPAN'], ['2000s', 'REUSE'], ['2010s', 'CI/CD'], ['NOW', 'AGENTS']]
 const ALARMS = ['ISSUE UNCLEAR', 'OUT OF SCOPE', 'BUILDER BLOCKED', 'ROUNDS USED UP', 'APPROVER ESCALATES', 'MERGE NOT CLEAN']
 const petals = [[-135, 'WRITES'], [-45, 'TESTS'], [45, 'REVIEWS'], [135, 'APPROVES']].map(([a, t]) => {
   const p = (deg, r) => [2000 + r * Math.cos(deg * Math.PI / 180), 400 + r * Math.sin(deg * Math.PI / 180)].map(Math.round)
@@ -213,6 +214,12 @@ $('#board').innerHTML = `
   <path id="track-sec" d="M${X.src},${Y}H${X.split}V${FEED.security}H${X.join}V${Y}H${X.main}"/>
 </defs>
 <rect x="-6000" y="-6000" width="18000" height="14000" fill="url(#tiles)"/>
+
+<g id="history" class="fade hide">
+  ${ERAS.map(([when, what], i) => { const x = 1400 + i * 600
+    return (i ? `<g class="seg" id="hseg-${i}"><path class="bus" d="M${x - 540},-470H${x - 60}"/><path class="flow" d="M${x - 540},-470H${x - 60}"/></g>` : '') +
+      `<rect class="box" x="${x - 60}" y="-530" width="120" height="120" rx="6"/>${lamp('h' + i, x, -470, 24)}${eng(x, -570, when)}${eng(x, -350, what, 's')}` }).join('')}
+</g>
 
 <g id="vignette" class="fade hide">
   ${petals}
@@ -315,7 +322,8 @@ function resetBoard() {
   ;['gate', 'merge'].forEach((b) => cl('blade-' + b, 'open', false))
   $$('.ring').forEach((r) => r.setAttribute('class', 'ring')); $$('.win').forEach((w) => w.setAttribute('class', 'win')); $$('.tag').forEach((t) => t.classList.remove('on'))
   ;['ret-gate', 'ret-review'].forEach((r) => cl(r, 'hot', false))
-  ;['vignette', 'sources', 'tags', 'ambient'].forEach((g) => cl(g, 'hide', true))
+  ;['vignette', 'sources', 'tags', 'ambient', 'history'].forEach((g) => cl(g, 'hide', true))
+  ERAS.forEach((_, i) => { lampSet('h' + i, ''); cl('hseg-' + i, 'live', false) })
   $('#srcblade').style.transform = 'rotate(0deg)'
 }
 // The job reaches station k (8 = merged): everything behind it is energised and lit.
@@ -363,6 +371,13 @@ const STATIONS = [
   { id: 'Review', kind: 'agents, chosen by risk', does: 'Up to four reviewers work in parallel. The job waits for all of them.' },
   { id: 'Approve', kind: 'an agent', does: 'Checks every acceptance criterion against the evidence. Approves, or hands the decision to a person.', reads: 'everything above', writes: '<code>decision.md</code>' },
   { id: 'Merge', kind: 'a script', does: 'Syncs with main, runs the gate once more, merges and closes the issue.', reads: '<code>decision.md</code>', writes: 'the merge' },
+]
+const HISTORY = [
+  ['1968', 'The idea is older than it looks', 'Bob Bemer at General Electric described a software factory: a computer-controlled programming environment with standard tools, and records kept for management and measurement.'],
+  ['1970s and 1980s', 'Japan built them', 'Hitachi opened its Software Works in 1969, and Toshiba, NEC and Fujitsu followed. They ran software like manufacturing, with standard processes and reusable parts.'],
+  ['2000s', 'Reuse through patterns and models', 'The focus moved to patterns, models and frameworks for building families of similar applications. Microsoft published its approach under the same name in 2004.'],
+  ['2010s', 'The pipeline became automatic', 'Continuous integration and delivery automated the deterministic steps: build, test and deploy. GitHub Actions and similar tools made that normal.'],
+  ['Now', 'Agents do the work in between', 'Agents now do the unstructured thinking between those deterministic steps, including writing the code. The basic loop is a trigger, an agent, a proposed change and a merge.'],
 ]
 const PROBLEMS = [
   ['It grades its own work.', 'The context that wrote the bug reads it again and finds it reasonable.'],
@@ -480,6 +495,11 @@ const SLIDES = [
   { name: 'Start', side: 'bare', frame: ALL,
     html: () => `<h1>The AI software factory</h1><p class="sub">How an issue becomes a tested and reviewed change. Agents do the work, and scripts decide whether it may pass.</p><p class="sub small">Press → to start.</p>`,
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
+
+  { name: 'Background', side: 'left', steps: 5, frame: (s) => [1400 + s * 600, -450, 2500],
+    html: (s) => `<p class="kicker">${HISTORY[s][0]}</p><h2>${HISTORY[s][1]}</h2><p>${HISTORY[s][2]}</p>
+      <p class="dim small">History as told in ZazenCodes, <a href="https://www.youtube.com/watch?v=ctoaIC4LHmI">Build Your Own AI Software Factory with Claude Code</a>.</p>`,
+    board: (s) => { cl('history', 'hide', false); ERAS.forEach((_, i) => { lampSet('h' + i, i < s ? 'ok' : i === s ? 'warn' : ''); cl('hseg-' + i, 'live', i <= s) }) } },
 
   { name: 'The problem', side: 'left', frame: [2300, 400, 2400], steps: 3,
     html: (s) => `<h2>One agent in one chat does every job</h2>${PROBLEMS.slice(0, s + 1).map(([a, b], i) => `<p class="big${i < s ? ' dim' : ''}">${a}</p>${i < s ? '' : `<p>${b}</p>`}`).join('')}`,
