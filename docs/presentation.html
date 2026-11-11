@@ -140,6 +140,8 @@ ol { margin: 0 0 .8em; padding-left: 1.3em; } ol li { margin-bottom: .45em; max-
 table { border-collapse: collapse; width: 100%; font-size: .95rem; }
 td { padding: .32em .9em .32em 0; border-top: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); vertical-align: top; }
 td.m { font-family: var(--display); font-size: 1.1rem; white-space: nowrap; }
+.trio { display: grid; grid-template-columns: 1fr 1.2fr 1.25fr; gap: 0 2.6rem; align-items: start; }
+.trio p { margin: 0 0 .6em; } .trio p.field { margin-bottom: .35em; } .trio code { white-space: nowrap; }
 a { color: var(--live); text-underline-offset: .18em; }
 
 /* ---- the rail ---- */
@@ -158,7 +160,7 @@ a { color: var(--live); text-underline-offset: .18em; }
   #board { position: sticky; top: 0; height: 42vh; z-index: 1; }
   #panel, #panel.left, #panel.right, #panel.top, #panel.bottom, #panel.wide, #panel.bare { position: relative; inset: auto; transform: none; width: auto; margin: .8rem .8rem 5rem; max-height: none; }
   #panel.bare { padding: 1rem; }
-  .doc, .pair { grid-template-columns: 1fr; }
+  .doc, .pair, .trio { grid-template-columns: 1fr; }
   #rail .hint, #lamps { display: none; }
   #rail { justify-content: space-between; }
 }
@@ -404,7 +406,7 @@ const HISTORY = [
   ['Now', 'Agents do the work in between', 'Pipelines automated the deterministic steps. Agents now do the unstructured work between them, including writing the code. The basic loop is a trigger, an agent, a proposed change and a merge.', ''],
 ]
 const ORCH = [
-  ['You start it once', 'You type <code>/factory run</code> in Claude Code. That session reads the playbook and the list of waiting requests, and from then on it runs every job. It is the foreman of the line.'],
+  ['You start it once', 'You type <code>/factory run</code> in Claude Code, or <code>./fx run</code> opens it for you. That session reads the playbook and the list of waiting requests, and from then on it runs every job. It is the foreman of the line.'],
   ['It starts one agent per station', 'Each agent is a fresh AI session with its own written instructions. It is given the job\'s folder and working copy, does its one task, writes its file and ends. Agents run in the background, several jobs at a time.'],
   ['After every agent, it calls a script', 'The script reads the file the agent wrote and moves the job to the next station, or refuses. The orchestrator asks, and the script decides.'],
   ['It does none of the work itself', 'Its playbook forbids it to write code, specs, reviews or decisions, or to change a job\'s record. Its whole task is to start the next agent and call the next script. When a job needs a person, it stops and tells you.'],
@@ -631,6 +633,24 @@ const SLIDES = [
       ${state.tracker === 'github' ? '' : '<p class="dim small">With no pull request, the factory merges the branch itself once the gate has passed again. Git refuses the push if main moved in the meantime.</p>'}` },
     board: () => { cl('sources', 'hide', false); live(1); $('#srcblade').style.transform = `rotate(${TRACKERS[state.tracker][3]}deg)` } },
 
+  { name: 'The commands', side: 'wide', frame: [2760, 1130, 5600],
+    html: () => { const row = (cmd, what) => `<p><code>${cmd}</code><br>${what}</p>`
+      return `<h2>One command drives it: fx</h2><div class="trio">
+      <div><p class="field">Get ready</p>
+        ${row('./fx doctor', 'checks that this machine can run the factory')}
+        ${row('./fx up', 'starts the dashboard and opens this presentation')}</div>
+      <div><p class="field">Run</p>
+        ${row('./fx queue 2', 'queues request 2 for the next run')}
+        ${row('./fx run', 'opens Claude Code and types <code>/factory run</code>')}
+        ${row('./fx status', 'shows the jobs and what runs next')}
+        ${row('./fx watch', 'shows the files as the stations write them')}</div>
+      <div><p class="field">Experiment</p>
+        ${row('./fx config review.low sonnet', 'changes one setting')}
+        ${row('./fx reset', 'discards the work, keeps your setup, starts again')}
+        <p class="dim small" style="margin-top:1em"><code>./fx &lt;command&gt; --help</code> explains each one. The factory still runs in a Claude Code session that you watch; <code>fx</code> only opens it.</p></div>
+      </div>` },
+    board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
+
   { name: 'In short', side: 'left', frame: [3100, 1250, 6800],
     html: () => `<h2>Five ideas to take away</h2><ol>
       <li>Split the work into stations that each do one thing.</li>
@@ -645,7 +665,9 @@ const SLIDES = [
 cd factory-sandbox
 factory/local-setup.sh ~/factory-demo
 cd ~/factory-demo
-claude          # then type: /factory run</pre>
+./fx doctor     # is this machine ready?
+./fx up         # dashboard and presentation
+./fx run        # Claude Code on /factory run</pre>
       <p style="margin-top:.9em">Three issues are waiting. One should merge, one should be escalated to you, and one should be rejected. Guess which before you run it.</p>
       <p class="dim small">macOS, Linux, or Windows with WSL. The factory is <a href="https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2">ZazenCodes' Software Factory v2</a>, GPLv3. This repository adapts it and adds the local mode.</p>`,
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
