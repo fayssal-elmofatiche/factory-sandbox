@@ -16,6 +16,8 @@ Usage:
   fx unqueue <issue>   remove that label
   fx status            jobs, and what the next run would do
   fx watch             show job files as they are written (Ctrl-C to stop)
+  fx config            show the settings worth changing in a demo
+  fx config <key> <value>   change one and commit it (see `fx config` for the keys)
 
 When a job waits for you (the "Needs human" column):
   fx show <job>        the decision, the change and your options
@@ -29,7 +31,10 @@ Words can follow the command, come on stdin, or be typed in your editor.
 <job> is a job id or its issue number.
 
   fx baseline          mark the current state as the demo's starting point
-  fx reset [--yes]     put a local demo sandbox back to that starting point
+  fx reset             discard the work, keep your setup changes, start again
+  fx reset --setup     also discard setup changes: back to how the sandbox was made
+                       both take --yes (don't ask) and --keep (save this run's
+                       job files under factory/runs/ first)
 
 The factory itself runs inside a Claude Code session: `fx run` opens one and
 types the command, and from there it is yours to watch and approve.
@@ -51,7 +56,11 @@ REPO = Path(__file__).resolve().parent
 FACTORY = REPO / "factory"
 JOB = FACTORY / "bin" / "job"
 DECK = REPO / "docs" / "presentation.html"
-TAG = "demo-start"
+TAG = "demo-start"  # the starting point `fx reset` returns to; moves when the setup changes
+ORIGIN_TAG = "demo-origin"  # the setup the sandbox was created with; `fx reset --setup` returns to it
+# The setup: what you change to run an experiment. Everything else a run produces is work.
+SETUP = ["factory/config.json", "factory/checks.sh", ".claude", "AGENTS.md"]
+MODELS = {"haiku", "sonnet", "opus", "fable"}
 MIN_CLAUDE = (2, 1, 257)
 
 
@@ -348,67 +357,130 @@ def cmd_approve(args):
     return job("approve", args[0])
 
 
-# ---- baseline and reset ----------------------------------------------------
+# ---- baseline, reset and config --------------------------------------------
 
 
 def local_sandbox():
     """Refuse anything that is not a local demo sandbox, and say why."""
     if tracker() != "files":
-        die("reset works only in a local sandbox whose tracker is files (see docs/local-mode.md)")
+        die("this works only in a local sandbox whose tracker is files (see docs/local-mode.md)")
     url = sh("git", "remote", "get-url", "origin", check=True).stdout.strip()
     if re.match(r"^(https?://|ssh://|git@|git://)", url) or not Path(url).exists():
         die(f"origin is {url}, not a folder on this machine; fx will not reset a shared repository")
     return config()["base_branch"]
 
 
+def has_tag(tag):
+    return sh("git", "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}").returncode == 0
+
+
+def short(rev):
+    return sh("git", "rev-parse", "--short", rev).stdout.strip()
+
+
+def snapshot(prefix):
+    """Copy the issue files and job records into fx's state as <prefix>-issues and <prefix>-jobs."""
+    counts = {}
+    for name in ("issues", "jobs"):
+        snap = state_dir() / f"{prefix}-{name}"
+        shutil.rmtree(snap, ignore_errors=True)
+        if (FACTORY / name).exists():
+            shutil.copytree(FACTORY / name, snap, ignore=shutil.ignore_patterns(".lock"))
+        counts[name] = len([x for x in snap.iterdir() if not x.name.startswith(".")]) if snap.exists() else 0
+    return counts
+
+
+def dirty(outside_setup_only=False):
+    """Tracked files with uncommitted changes. Untracked files are left alone."""
+    lines = sh("git", "status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+    paths = [line[3:].split(" -> ")[-1] for line in lines]
+    if outside_setup_only:
+        paths = [x for x in paths if not any(x == s or x.startswith(s + "/") for s in SETUP)]
+    return paths
+
+
 def cmd_baseline():
     base = local_sandbox()
-    if sh("git", "status", "--porcelain").stdout.strip():
+    if dirty():
         die("commit or discard your changes first; the starting point must be a commit")
     if sh("git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != base:
         die(f"switch to {base} first")
     sh("git", "tag", "-f", TAG, check=True)
-    # The issue files and the finished job records belong to the starting point too.
-    counts = {}
-    for name in ("issues", "jobs"):
-        snap = state_dir() / f"baseline-{name}"
-        shutil.rmtree(snap, ignore_errors=True)
-        if (FACTORY / name).exists():
-            shutil.copytree(FACTORY / name, snap, ignore=shutil.ignore_patterns(".lock"))
-        counts[name] = len([p for p in snap.iterdir() if not p.name.startswith(".")]) if snap.exists() else 0
-    head = sh("git", "rev-parse", "--short", "HEAD").stdout.strip()
-    print(f"Starting point set at {head}, with {counts['issues']} issue file(s) and {counts['jobs']} job record(s).")
-    print("./fx reset brings the sandbox back to this state.")
+    counts = snapshot("baseline")
+    if not has_tag(ORIGIN_TAG):  # the first starting point is also the original setup
+        sh("git", "tag", ORIGIN_TAG, check=True)
+        snapshot("origin")
+    print(f"Starting point set at {short('HEAD')}, with {counts['issues']} issue file(s) and {counts['jobs']} job record(s).")
+    print("./fx reset brings the sandbox back to this state and keeps later setup changes.")
     return 0
 
 
 def cmd_reset(args):
     base = local_sandbox()
-    if sh("git", "rev-parse", "--verify", "--quiet", TAG).returncode != 0:
+    unknown = [a for a in args if a not in {"--yes", "--setup", "--keep"}]
+    if unknown:
+        die(f"unknown option {unknown[0]}; reset takes --yes, --setup and --keep")
+    if not has_tag(TAG):
         die("no starting point yet; run ./fx baseline when the sandbox is in the state you want to return to")
-    if sh("git", "status", "--porcelain").stdout.strip():
-        die("this checkout has uncommitted changes; commit or discard them first")
     if sh("git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != base:
         die(f"switch to {base} first")
+    other = dirty(outside_setup_only=True)
+    if other:
+        die(f"uncommitted changes outside the setup files ({', '.join(other[:3])}); commit or discard them first")
+    if not has_tag(ORIGIN_TAG):  # a sandbox made before this option existed
+        sh("git", "tag", ORIGIN_TAG, TAG, check=True)
+        for name in ("issues", "jobs"):
+            src = state_dir() / f"baseline-{name}"
+            if src.exists():
+                shutil.copytree(src, state_dir() / f"origin-{name}", dirs_exist_ok=True)
 
+    to_origin = "--setup" in args
+    target = ORIGIN_TAG if to_origin else TAG
+    snap = "origin" if to_origin else "baseline"
     sh("git", "fetch", "origin", check=True)
-    kept = state_dir() / "baseline-jobs"
-    keep = {p.name for p in kept.iterdir()} if kept.exists() else set()
-    jobs = sorted(p.name for p in (FACTORY / "jobs").iterdir()
-                  if p.is_dir() and p.name not in keep) if (FACTORY / "jobs").exists() else []
-    commits = sh("git", "rev-list", "--count", f"{TAG}..origin/{base}").stdout.strip() or "0"
-    branches = [b.strip() for b in sh("git", "branch", "--list", "factory/*", "--format=%(refname:short)").stdout.split()]
+    kept = state_dir() / f"{snap}-jobs"
+    keep = {x.name for x in kept.iterdir()} if kept.exists() else set()
+    jobs = sorted(x.name for x in (FACTORY / "jobs").iterdir()
+                  if x.is_dir() and x.name not in keep) if (FACTORY / "jobs").exists() else []
+    commits = sh("git", "rev-list", "--count", f"{target}..origin/{base}").stdout.strip() or "0"
+    branches = sh("git", "branch", "--list", "factory/*", "--format=%(refname:short)").stdout.split()
     remote = [b.split("/", 1)[1] for b in sh("git", "branch", "-r", "--list", "origin/factory/*",
                                              "--format=%(refname:short)").stdout.split()]
-    print(f"Reset this sandbox to its starting point ({sh('git', 'rev-parse', '--short', TAG).stdout.strip()}):")
+    changed = [] if to_origin else setup_changes(target)
+
+    print(f"Reset this sandbox to {'the setup it was created with' if to_origin else 'its starting point'} ({short(target)}):")
     print(f"  delete {len(jobs)} job record(s): {', '.join(jobs) or 'none'}")
     print(f"  drop {commits} commit(s) from {base}, here and in origin")
     print(f"  delete {len(set(branches) | set(remote))} job branch(es)")
-    print("  restore the issue files and job records to how they were at the starting point")
+    print("  restore the issue files and job records to how they were then")
+    if to_origin:
+        print("  discard every setup change made since the sandbox was created")
+    else:
+        print(f"  keep your setup changes: {', '.join(changed) or 'none to keep'}")
+    if "--keep" in args and jobs:
+        print("  save this run's job files under factory/runs/ first")
     if "--yes" not in args:
         if input("Type yes to continue: ").strip().lower() != "yes":
             print("nothing changed")
             return 1
+
+    if "--keep" in args and jobs:
+        dest = FACTORY / "runs" / time.strftime("%Y%m%d-%H%M%S")
+        for name in jobs:
+            shutil.copytree(FACTORY / "jobs" / name, dest / name, ignore=shutil.ignore_patterns(".lock"))
+        print(f"saved {len(jobs)} job folder(s) to {dest.relative_to(REPO)}")
+
+    # Set the setup aside, as it is in the working tree now (committed or not).
+    aside = state_dir() / "setup-aside"
+    shutil.rmtree(aside, ignore_errors=True)
+    if not to_origin:
+        for rel in SETUP:
+            src = REPO / rel
+            if src.is_dir():
+                shutil.copytree(src, aside / rel)
+            elif src.exists():
+                (aside / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, aside / rel)
 
     for wt in sorted((REPO / ".worktrees").iterdir()) if (REPO / ".worktrees").exists() else []:
         sh("git", "worktree", "remove", "--force", str(wt))
@@ -417,19 +489,110 @@ def cmd_reset(args):
         sh("git", "branch", "-D", b)
     for b in remote:
         sh("git", "push", "origin", "--delete", b)
-    sh("git", "reset", "--hard", TAG, check=True)
-    sh("git", "push", "--force", "origin", f"{TAG}^{{commit}}:refs/heads/{base}", check=True)
+    sh("git", "reset", "--hard", target, check=True)
+
+    if not to_origin:  # put the setup back and make it part of the starting point
+        for rel in SETUP:
+            src, dst = aside / rel, REPO / rel
+            if src.is_dir():
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(src, dst)
+            elif src.exists():
+                shutil.copy2(src, dst)
+        sh("git", "add", "--", *[rel for rel in SETUP if (REPO / rel).exists()], check=True)
+        if sh("git", "diff", "--cached", "--quiet").returncode != 0:
+            sh("git", "commit", "-m", "Setup for the next run", check=True)
+    shutil.rmtree(aside, ignore_errors=True)
+
+    sh("git", "tag", "-f", TAG, check=True)
+    sh("git", "push", "--force", "origin", f"HEAD:refs/heads/{base}", check=True)
     sh("git", "fetch", "origin", check=True)
     shutil.rmtree(FACTORY / "jobs", ignore_errors=True)
     if kept.exists():
         shutil.copytree(kept, FACTORY / "jobs")
-
-    issues, snap = FACTORY / "issues", state_dir() / "baseline-issues"
-    source = snap if snap.exists() else FACTORY / "demo-issues"
+    issues, saved = FACTORY / "issues", state_dir() / f"{snap}-issues"
     shutil.rmtree(issues, ignore_errors=True)
-    shutil.copytree(source, issues)
-    print("\nDone. The sandbox is back at its starting point:")
+    shutil.copytree(saved if saved.exists() else FACTORY / "demo-issues", issues)
+    if to_origin:  # the original setup is the starting point again
+        snapshot("baseline")
+
+    print(f"\nDone. The sandbox starts again at {short('HEAD')}:")
     job("issues")
+    return 0
+
+
+def setup_changes(since):
+    """Setup files that differ from the starting point, committed or not."""
+    out = sh("git", "diff", "--name-only", since, "--", *SETUP).stdout.split()
+    return sorted(set(out))
+
+
+CONFIG_KEYS = {
+    "concurrency": "how many jobs run at once (1 or more)",
+    "max_rounds": "how often build, gate and review may repeat before a person decides (1 or more)",
+    "merge_method": "merge, squash or rebase",
+    "review.low": "model of the code reviewer for low-risk changes: haiku, sonnet, opus",
+    "review.medium": "the same for medium risk",
+    "review.high": "the same for high risk",
+}
+
+
+def cmd_config(args):
+    cfg = config()
+    if not args:
+        print(f"  tracker        {cfg.get('tracker', 'github')}")
+        for key in ("concurrency", "max_rounds", "merge_method"):
+            print(f"  {key:<14} {cfg[key]}")
+        for risk, reviewers in cfg["routing"].items():
+            print(f"  review.{risk:<7} " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
+        for surface, reviewers in cfg["surface_reviewers"].items():
+            print(f"  touches {surface:<6} adds " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
+        print("\nChange one with ./fx config <key> <value>:")
+        for key, what in CONFIG_KEYS.items():
+            print(f"  {key:<14} {what}")
+        return 0
+    if len(args) != 2 or args[0] not in CONFIG_KEYS:
+        die("usage: fx config <key> <value>; run ./fx config for the keys")
+    key, value = args
+    path = FACTORY / "config.json"
+    text = path.read_text()
+    if key in {"concurrency", "max_rounds"}:
+        if not value.isdigit() or int(value) < 1:
+            die(f"{key} must be a whole number, 1 or more")
+        new = re.sub(rf'("{key}":\s*)\d+', rf"\g<1>{int(value)}", text, count=1)
+        cfg[key] = int(value)
+    elif key == "merge_method":
+        if value not in {"merge", "squash", "rebase"}:
+            die("merge_method must be merge, squash or rebase")
+        new = re.sub(r'("merge_method":\s*")\w+(")', rf"\g<1>{value}\g<2>", text, count=1)
+        cfg[key] = value
+    else:
+        risk = key.split(".", 1)[1]
+        if value not in MODELS:
+            die(f"the model must be one of: {', '.join(sorted(MODELS))}")
+        new = re.sub(rf'("{risk}":\s*\{{\s*"code":\s*")\w+(")', rf"\g<1>{value}\g<2>", text, count=1)
+        cfg["routing"][risk]["code"] = value
+    try:
+        same = json.loads(new) == cfg
+    except ValueError:
+        same = False
+    if not same:  # the file isn't laid out the way the pattern expects: rewrite it whole
+        new = json.dumps(cfg, indent=2) + "\n"
+    if new == text:
+        print(f"{key} is already {value}")
+        return 0
+    path.write_text(new)
+    sh("git", "add", "factory/config.json", check=True)
+    sh("git", "commit", "-m", f"Set {key} to {value}", check=True)
+    print(f"{key} is now {value} (committed as {short('HEAD')}).")
+    url = sh("git", "remote", "get-url", "origin").stdout.strip()
+    if tracker() == "files" and url and Path(url).exists():
+        base = cfg["base_branch"]
+        pushed = sh("git", "push", "origin", f"HEAD:refs/heads/{base}")
+        print("It applies to the next job." if pushed.returncode == 0
+              else f"Could not push it to origin: {pushed.stderr.strip()}")
+    else:
+        print("Push it when you are ready; the factory reads the main checkout.")
     return 0
 
 
@@ -472,6 +635,8 @@ def main(argv):
         return decide("reject", args, "Why is this job dropped? Your reason is posted on the issue.")
     if cmd == "park":
         return decide("park", args, "Why is this job stopped? Your reason is posted on the issue.")
+    if cmd == "config":
+        return cmd_config(args)
     if cmd == "baseline":
         return cmd_baseline()
     if cmd == "reset":
