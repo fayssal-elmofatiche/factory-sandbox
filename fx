@@ -315,7 +315,7 @@ def cmd_baseline():
 def cmd_reset(args):
     base = local_sandbox()
     if sh("git", "rev-parse", "--verify", "--quiet", TAG).returncode != 0:
-        die(f"no starting point yet; run ./fx baseline when the sandbox is in the state you want to return to")
+        die("no starting point yet; run ./fx baseline when the sandbox is in the state you want to return to")
     if sh("git", "status", "--porcelain").stdout.strip():
         die("this checkout has uncommitted changes; commit or discard them first")
     if sh("git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != base:
