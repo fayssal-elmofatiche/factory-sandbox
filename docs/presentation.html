@@ -76,6 +76,11 @@ code { font-family: var(--code); font-size: .9em; background: color-mix(in srgb,
 #packet rect, .amb rect { fill: var(--live); stroke: var(--plate); stroke-width: 5; }
 #packet path { stroke: var(--plate); stroke-width: 5; fill: none; stroke-linecap: round; }
 .loop { fill: none; stroke: var(--trip); stroke-width: 9; stroke-linecap: round; }
+.cmd { stroke: var(--dead); stroke-width: 6; fill: none; stroke-dasharray: 3 13; stroke-linecap: round; transition: stroke .4s; }
+.cmd.on { stroke: var(--live); animation: flow 1s linear infinite; }
+.desk { fill: var(--plate); stroke: var(--ink); stroke-width: 8; }
+.typed { font-family: var(--code) !important; font-size: 44px; text-anchor: middle; }
+.eng.desk-t { font-size: 66px; } .eng.desk-s { font-size: 34px; }
 .tiles { fill: none; stroke: var(--tile); stroke-width: 2; }
 .head-trip { fill: var(--trip); } .head-dead { fill: var(--dead); }
 .station { cursor: pointer; }
@@ -225,6 +230,16 @@ $('#board').innerHTML = `
       `<rect class="box" x="${x - 60}" y="-530" width="120" height="120" rx="6"/>${lamp('h' + i, x, -470, 24)}${eng(x, -570, when)}${eng(x, -350, what, 's')}` }).join('')}
 </g>
 
+<g id="orch" class="fade hide">
+  <rect class="desk" x="330" y="398" width="430" height="84" rx="6"/><text class="typed" x="545" y="455">/factory run</text>
+  <path class="cmd" id="cmd-you" d="M760,440H880"/>
+  <rect class="desk" x="880" y="360" width="3940" height="160" rx="8"/>
+  <text class="eng desk-t" x="2850" y="446">ORCHESTRATOR</text><text class="eng desk-s" x="2850" y="497">ONE CLAUDE CODE SESSION, FOLLOWING A WRITTEN PLAYBOOK</text>
+  ${[['intake', X.intake, 1050, 'a'], ['route', X.route, 1076, 's'], ['spec', X.spec, 1050, 'a'], ['build', X.build, 1050, 'a'], ['gate', X.gate, 1076, 's'],
+     ['review', X.rev, 712, 'a'], ['approve', X.approve, 1050, 'a'], ['merge', X.merge, 1076, 's']]
+    .map(([id, x, y, kind]) => `<path class="cmd cmd-${kind}" d="M${x},520V${y}"/>`).join('')}
+</g>
+
 <g id="vignette" class="fade hide">
   ${petals}
   <circle class="machine" cx="2000" cy="400" r="124"/>
@@ -326,7 +341,8 @@ function resetBoard() {
   ;['gate', 'merge'].forEach((b) => cl('blade-' + b, 'open', false))
   $$('.ring').forEach((r) => r.setAttribute('class', 'ring')); $$('.win').forEach((w) => w.setAttribute('class', 'win')); $$('.tag').forEach((t) => t.classList.remove('on'))
   ;['ret-gate', 'ret-review'].forEach((r) => cl(r, 'hot', false))
-  ;['vignette', 'sources', 'tags', 'ambient', 'history'].forEach((g) => cl(g, 'hide', true))
+  ;['vignette', 'sources', 'tags', 'ambient', 'history', 'orch'].forEach((g) => cl(g, 'hide', true))
+  $$('.cmd').forEach((c) => c.classList.remove('on'))
   ERAS.forEach((_, i) => { lampSet('h' + i, ''); cl('hseg-' + i, 'live', false) })
   $('#srcblade').style.transform = 'rotate(0deg)'
 }
@@ -386,6 +402,12 @@ const HISTORY = [
   ['2001 to 2019', 'The pipeline became automatic', 'Continuous integration servers appeared in the early 2000s, with CruiseControl in 2001 and Hudson, later Jenkins, a few years after. By the 2010s automated build, test and deploy was standard, and in 2019 GitHub built it into the repository with Actions.',
     'CircleCI, "A brief history of DevOps, part III"; GitHub announcements of 8 August and 13 November 2019.'],
   ['Now', 'Agents do the work in between', 'Pipelines automated the deterministic steps. Agents now do the unstructured work between them, including writing the code. The basic loop is a trigger, an agent, a proposed change and a merge.', ''],
+]
+const ORCH = [
+  ['You start it once', 'You type <code>/factory run</code> in Claude Code. That session reads the playbook and the list of waiting requests, and from then on it runs every job. It is the foreman of the line.'],
+  ['It starts one agent per station', 'Each agent is a fresh AI session with its own written instructions. It is given the job\'s folder and working copy, does its one task, writes its file and ends. Agents run in the background, several jobs at a time.'],
+  ['After every agent, it calls a script', 'The script reads the file the agent wrote and moves the job to the next station, or refuses. The orchestrator asks, and the script decides.'],
+  ['It does none of the work itself', 'Its playbook forbids it to write code, specs, reviews or decisions, or to change a job\'s record. Its whole task is to start the next agent and call the next script. When a job needs a person, it stops and tells you.'],
 ]
 const PROBLEMS = [
   ['It reviews its own work.', 'The same AI session that wrote a bug reads the code again and finds it reasonable.'],
@@ -531,6 +553,16 @@ const SLIDES = [
       <p class="dim small" style="margin-top:.8em">The names in the circles are Claude models. Fable and Opus are the large ones, Sonnet is mid-sized, and Haiku is small and cheap.</p>`,
     board: () => runLine({ code: 'Haiku' }) },
 
+  { name: 'The orchestrator', side: 'bottom', frame: [2610, 1010, 4950], steps: 4,
+    html: (s) => `<div class="doc"><div><h2>One session runs the whole line: the orchestrator</h2>
+      <p class="dim">Stations do the work. The orchestrator is what moves a job from one station to the next. It is an AI session too, but it only coordinates.</p></div>
+      <div><p class="kicker">Step ${s + 1} of 4</p><p class="big">${ORCH[s][0]}</p><p>${ORCH[s][1]}</p></div></div>`,
+    board: (s) => { cl('orch', 'hide', false); cl('cmd-you', 'on', true); feeders(FULL, false)
+      if (s >= 1) $$('.cmd-a').forEach((c) => c.classList.add('on'))
+      if (s >= 2) $$('.cmd-s').forEach((c) => c.classList.add('on'))
+      if (s === 1) ['intake', 'spec', 'build', 'approve', 'code', 'ux', 'ui', 'security'].forEach((l) => lampSet(l, 'warn'))
+      if (s === 2) ['route', 'gate', 'merge'].forEach((l) => lampSet(l, 'warn')) } },
+
   { name: 'Stations', side: 'left', steps: 8, frame: (s) => [POS[ORDER[s]][0] + (s === 5 ? 330 : 0), Y + 40, s === 5 ? 2150 : 1700],
     html: (s) => { const t = STATIONS[s]; return `<p class="kicker">Station ${s + 1} of 8, ${t.kind}</p><h2>${t.id}</h2><p>${t.does}</p>
       ${s === 5 ? `<table><tr><td>Code</td><td class="m">Haiku</td><td>every job; Sonnet when risky</td></tr><tr><td>UX</td><td class="m">Sonnet</td><td>interface changes</td></tr><tr><td>UI design</td><td class="m">Haiku</td><td>interface changes</td></tr><tr><td>Security</td><td class="m">Opus</td><td>security or personal data</td></tr></table>`
@@ -546,7 +578,7 @@ const SLIDES = [
   { name: 'The rules', side: 'wide', frame: [2760, 1130, 5600],
     html: () => { const why = legalMove()
       return `<h2>A script tracks where each job is and refuses illegal moves</h2>
-      <p>No agent can move a job to the next station. Only the script can, and only when the right file is there.</p>
+      <p>No agent can move a job to the next station. The orchestrator asks the script, and the script moves the job only when the right file is there.</p>
       <div class="pair"><div><p class="field">The job is in</p>${keys('from', STAGES.slice(0, 9).map((s) => [s]), (v) => v === state.from)}</div>
       <div><p class="field">Try to move it to</p>${keys('to', STAGES.filter((s) => s !== state.from).map((s) => [s]), (v) => v === state.to)}</div>
       <div class="readout ${!state.to ? '' : why ? 'ok' : 'no'}">${!state.to ? '<b>Pick a destination</b>The green rings mark the legal moves. Any other choice is refused.'
@@ -603,7 +635,7 @@ const SLIDES = [
     html: () => `<h2>Five ideas to take away</h2><ol>
       <li>Split the work into stations that each do one thing.</li>
       <li>Hand over files, so every step leaves a record.</li>
-      <li>Let scripts decide what may pass. Agents do the work and do not judge it.</li>
+      <li>Let scripts decide what may pass. Agents do the work, and one orchestrator session only coordinates.</li>
       <li>Spend more review where the risk is higher.</li>
       <li>Stop and ask a person when a decision is theirs to make.</li></ol>`,
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },

@@ -25,16 +25,15 @@ git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
 cd factory-sandbox
 factory/local-setup.sh ~/factory-demo
 cd ~/factory-demo
-claude
+./fx doctor     # check this machine can run the factory
+./fx up         # start the dashboard, open it and the presentation
+./fx run        # open Claude Code on /factory run
 ```
 
-In Claude Code, type `/factory run`. To watch the jobs, open a second terminal:
-
-```bash
-cd ~/factory-demo/factory && python3 -m http.server 8765 --bind 127.0.0.1
-```
-
-Then open `http://localhost:8765/dashboard.html`.
+`./fx up` starts the dashboard on a free port bound to `127.0.0.1` and prints
+its address. `./fx run` opens Claude Code and types `/factory run`; you watch
+and approve from there. After a rehearsal, `./fx reset` puts the sandbox back
+to its starting point.
 
 The setup script creates two folders: `~/factory-demo`, the working checkout,
 and `~/factory-demo.git`, the bare repository that plays `origin`. It adds
@@ -76,8 +75,8 @@ The factory appends its comments below the body and sets `state: closed` when
 the job merges. You can write these files by hand or use the commands:
 
 ```bash
-factory/bin/job issues                 # list issues: number, state, labels, title
-factory/bin/job label 2 factory        # queue issue 2; the label is the trigger
+./fx issues                            # list issues: number, state, labels, title
+./fx queue 2                           # queue issue 2; the label is the trigger
 factory/bin/job new-issue "Short imperative title" <<'TXT'
 What you want built.
 TXT

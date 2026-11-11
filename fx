@@ -362,6 +362,7 @@ def cmd_reset(args):
 
 
 def main(argv):
+    sys.stdout.reconfigure(line_buffering=True)  # keep our lines in order with the scripts we call
     if not argv or argv[0] in {"-h", "--help", "help"}:
         print(__doc__.strip())
         return 0
