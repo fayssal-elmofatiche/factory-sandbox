@@ -72,7 +72,8 @@ if [ "$TRACKER" = kata ]; then
   git branch --quiet --set-upstream-to="origin/$BASE" "$BASE"
   git add .kata.toml .gitignore
 fi
-git commit --quiet -m "Run the factory in local mode (tracker: $TRACKER)"
+# A source that is already in this mode has nothing to commit.
+git diff --cached --quiet || git commit --quiet -m "Run the factory in local mode (tracker: $TRACKER)"
 git push --quiet origin "$BASE"
 
 # Demo issues: the first is labeled `factory`, so the first run has work to do.
