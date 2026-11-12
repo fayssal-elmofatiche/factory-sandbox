@@ -49,6 +49,27 @@
     border-radius: 8px; color: var(--human); font-family: var(--mono); font-size: 12px;
   }
 
+  /* Jobs that wait on a person, above everything else. */
+  .needs {
+    margin: 14px 32px 0; padding: 12px 16px; border: 1px solid var(--human); border-radius: 10px;
+    background: color-mix(in srgb, var(--human) 7%, var(--card));
+  }
+  .needs[hidden] { display: none; }
+  .needs h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--human); }
+  .needs ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .needs li { display: grid; grid-template-columns: minmax(0, 18em) minmax(0, 1fr); gap: 6px 16px; align-items: start; }
+  .needs .job {
+    text-align: left; background: none; border: 0; padding: 4px 0; cursor: pointer; color: var(--text);
+  }
+  .needs .job .num { display: block; }
+  .needs .job:hover .t { text-decoration: underline; }
+  .needs .job:focus-visible { outline: 2px solid var(--active); outline-offset: 2px; border-radius: 4px; }
+  .needs .move { margin: 0; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
   /* Board */
   .board {
     display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px;
@@ -274,6 +295,8 @@
   @media (max-width: 640px) {
     header { padding: 20px 16px 4px; }
     .banner { margin: 12px 16px 0; }
+    .needs { margin: 12px 16px 0; }
+    .needs li { grid-template-columns: 1fr; }
     .totals { margin: 12px 16px 0; }
     .board { grid-template-columns: 1fr; padding: 16px 16px 32px; }
     footer { padding: 0 16px 24px; }
@@ -296,6 +319,8 @@
   <div class="status" id="status">connecting…</div>
 </header>
 <div id="banner"></div>
+<section class="needs" id="needs" aria-labelledby="needs-title" hidden></section>
+<div class="sr-only" id="announce" aria-live="polite"></div>
 <section class="totals" id="summary" aria-label="Factory totals"></section>
 <main class="board" id="board"></main>
 <footer>
@@ -627,6 +652,7 @@ async function render() {
     $('board').innerHTML = html
     $('banner').innerHTML = banner
   }
+  renderNeeds()
   const running = jobs.filter((j) => LIVE.has(j.stage)).length
   const cost = jobs.reduce((sum, j) => sum + Number(j.cost_usd), 0)
   $('totals').textContent = `${running} running · $${cost.toFixed(2)} API-equivalent`
@@ -737,15 +763,48 @@ function moves(job) {
   return null
 }
 
-function movesHtml(job) {
-  const m = moves(job)
-  if (!m) return ''
-  return (m.why ? `<div class="why">${esc(m.why)}</div>` : '') + m.list.map(([cmd, what]) => `
+const moveHtml = ([cmd, what]) => `
     <div class="move">
       <code>${esc(cmd)}</code>
       <button class="copy" data-copy="${esc(cmd)}" aria-label="Copy the command ${esc(cmd)}">copy</button>
       <div class="what">${esc(what)}</div>
-    </div>`).join('')
+    </div>`
+
+function movesHtml(job) {
+  const m = moves(job)
+  if (!m) return ''
+  return (m.why ? `<div class="why">${esc(m.why)}</div>` : '') + m.list.map(moveHtml).join('')
+}
+
+// ---- Waiting for you ------------------------------------------------------
+
+const TITLE = document.title
+let lastNeeds = ''
+let waitingBefore = null // ids that waited at the last poll; null until the first one
+
+// Every job that waits on a person, with the first thing to type for it.
+function renderNeeds() {
+  const waiting = jobs.filter((j) => WITH_PERSON.has(j.stage))
+  document.title = waiting.length ? `(${waiting.length}) ${TITLE}` : TITLE
+  const html = waiting.length ? `<h2 id="needs-title">${waiting.length} waiting for you</h2><ul>${waiting.map((job) => {
+    const [num] = job.id.split('-')
+    const what = job.stage === 'needs-info' ? 'asked the author' : 'your call'
+    return `<li><button class="job" data-job="${esc(job.id)}" aria-label="Open job ${esc(num)}, ${esc(job.title)}, ${what}">
+        <span class="num">${esc(num)} · ${what}</span><span class="t">${esc(job.title)}</span></button>
+      ${moveHtml(moves(job).list[0])}</li>`
+  }).join('')}</ul>` : ''
+  if (html !== lastNeeds) {  // don't rebuild under a copy button someone is about to click
+    lastNeeds = html
+    $('needs').innerHTML = html
+    $('needs').hidden = !html
+  }
+  // Say so once when a job starts to wait, not on every poll.
+  const ids = new Set(waiting.map((j) => j.id))
+  if (waitingBefore) {
+    const fresh = waiting.filter((j) => !waitingBefore.has(j.id))
+    if (fresh.length) $('announce').textContent = fresh.map((j) => `Job ${j.id.split('-')[0]} is waiting for you: ${j.title}`).join('. ')
+  }
+  waitingBefore = ids
 }
 
 async function copyText(button) {
