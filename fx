@@ -940,6 +940,9 @@ def main(argv):
     if not argv or argv[0] == "help":
         parser.print_help()
         return 0
+    if argv[0] == "feedback" and "--spec" in argv[1:]:
+        # argparse takes the words only before an option, and people write it after the job.
+        argv = ["feedback", "--spec", *(a for a in argv[1:] if a != "--spec")]
     return dispatch(parser.parse_args(argv)) or 0
 
 
