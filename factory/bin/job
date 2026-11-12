@@ -48,6 +48,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import labels as failure_labels
 import portable
 
 if __name__ == "__main__":
@@ -777,6 +778,10 @@ def sync(job):
                 line = first_line(rd / f"review-{r}.md")
                 m = re.fullmatch(r"VERDICT:\s*(PASS|CHANGES)", line or "")
                 job["reviews"][r] = m.group(1) if m else ("pending" if line is None else "invalid")
+    # Why rounds went back, counted from every round's files: see factory/bin/labels.py.
+    job["failures"] = {}
+    for failure in failure_labels.job_failures(d):
+        job["failures"][failure["label"]] = job["failures"].get(failure["label"], 0) + 1
     cost, unpriced = cost_usd(job)
     # Claude Code prunes old transcripts; a finished job keeps the cost it had.
     job["cost_usd"] = max(cost, job.get("cost_usd") or 0.0) if job["stage"] in TERMINAL else cost

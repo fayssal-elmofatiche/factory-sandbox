@@ -139,6 +139,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx unqueue <issue>` | Takes that label off again |
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
+| `./fx retro` | Counts why rounds went back across jobs, and says where a fix would go |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
 | `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
@@ -303,7 +304,16 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   on; cards show a merge commit, a quiet timer and an incomplete cost.
   A summary strip shows the factory as a whole: requests by outcome, estimated
   cost, time to merge, first-try merges, gate failures, which reviewers asked
-  for changes, time by station, and the run `./fx reset --keep` saved last.
+  for changes, why rounds went back, time by station, and the run
+  `./fx reset --keep` saved last.
+- Failure labels (`factory/bin/labels.py`, `factory/bin/retro`, `./fx retro`):
+  every failed gate is labelled by its cause (lint, a failing test, removed or
+  skipped tests, a timeout, a protected path), and reviewers tag each finding
+  (`[spec-gap]`, `[redundant-test]` and so on). `job sync` counts them into
+  `job.json`; `./fx retro` counts them across jobs and, for a label seen often
+  enough, names the prompt or file a fix would most likely change. A person
+  makes that change: the gate fails any job that edits `.claude/` or
+  `factory/config.json`, so the factory can't rewrite its own setup.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 - `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.

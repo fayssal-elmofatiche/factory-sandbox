@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Why rounds went back to the builder, counted across jobs.
+
+Usage: retro [--threshold N] [--all] [--json]
+
+Reads every job folder's rounds (see labels.py for the labels), counts each
+label, and for a label seen at least N times (default 3) proposes where a fix
+would go. A proposal is text for a person: changes to .claude/ and
+factory/config.json are guarded, so the factory can't make them itself.
+
+--all also counts the runs `fx reset --keep` saved under factory/runs/.
+--json prints the counts and every place a label was seen, for scripts.
+
+Read-only: it writes nothing, not even job.json.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import labels
+import portable
+
+if __name__ == "__main__":
+    portable.utf8()
+
+FACTORY = Path(__file__).resolve().parents[1]
+
+
+def job_folders(include_runs):
+    roots = [FACTORY / "jobs"]
+    if include_runs and (FACTORY / "runs").is_dir():
+        roots += sorted(p for p in (FACTORY / "runs").iterdir() if p.is_dir())
+    for root in roots:
+        if root.is_dir():
+            for d in sorted(root.iterdir()):
+                if (d / "job.json").exists():
+                    yield root, d
+
+
+def collect(include_runs):
+    counts, jobs = {}, 0
+    for root, d in job_folders(include_runs):
+        jobs += 1
+        run = "" if root.name == "jobs" else f"{root.name}/"
+        for f in labels.job_failures(d):
+            entry = counts.setdefault(f["label"], {"count": 0, "jobs": set(), "where": []})
+            entry["count"] += 1
+            entry["jobs"].add(f"{run}{d.name}")
+            entry["where"].append(f"{run}{d.name} round {f['round']} {f['source']}")
+    return jobs, counts
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="retro", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--threshold", type=int, default=3, help="propose a fix from this many (default 3)")
+    parser.add_argument("--all", action="store_true", help="also count the runs saved under factory/runs/")
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    ns = parser.parse_args(argv)
+    if ns.threshold < 1:
+        parser.error("--threshold must be 1 or more")
+    jobs, counts = collect(ns.all)
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+
+    if ns.json:
+        print(json.dumps({
+            "jobs": jobs,
+            "threshold": ns.threshold,
+            "labels": {k: {"count": v["count"], "jobs": sorted(v["jobs"]), "where": v["where"],
+                           "fix": labels.fix_target(k)} for k, v in ranked},
+        }, indent=2))
+        return 0
+
+    if not counts:
+        print(f"No failures to count in {jobs} job(s): no failed gate and no CHANGES review.")
+        return 0
+    print(f"Why rounds went back, across {jobs} job(s). Counts, not rates.\n")
+    width = max(len(k) for k in counts)
+    print(f"  {'label':<{width}}  count  jobs")
+    for k, v in ranked:
+        print(f"  {k:<{width}}  {v['count']:>5}  {len(v['jobs']):>4}")
+    due = [(k, v) for k, v in ranked if v["count"] >= ns.threshold]
+    if due:
+        print(f"\nPropose a change (seen {ns.threshold} times or more):")
+        for k, v in due:
+            print(f"\n  {k}: {v['count']} times in {len(v['jobs'])} job(s)")
+            print(f"    where: {', '.join(v['where'][:6])}{', ...' if len(v['where']) > 6 else ''}")
+            print(f"    fix:   {labels.fix_target(k)}")
+        print("\n.claude/ and factory/config.json are guarded: the gate fails a job that changes them,")
+        print("so a person makes these changes, on a branch, like any change to the factory.")
+    else:
+        print(f"\nNothing seen {ns.threshold} times or more yet.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

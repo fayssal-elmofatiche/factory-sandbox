@@ -522,7 +522,11 @@ function summarise(stats) {
     incomplete: all.some((j) => j.cost_incomplete),
     firstTry: merged.filter((j) => j.round === 1).length,
     minutes: merged.length ? merged.reduce((sum, j) => sum + (new Date(j.ended) - new Date(j.started)), 0) / merged.length / 60000 : null,
-    rounds: 0, gateFails: 0, reviewers: {}, stages: {},
+    rounds: 0, gateFails: 0, reviewers: {}, stages: {}, failures: {},
+  }
+  // job.json `failures`: factory/bin/job sync counts them from every round (factory/bin/labels.py).
+  for (const j of all) {
+    for (const [label, n] of Object.entries(j.failures || {})) t.failures[label] = (t.failures[label] || 0) + n
   }
   for (const s of stats) {
     for (const v of s.rounds) {
@@ -566,6 +570,11 @@ function summaryHtml(t, prev) {
   if (reviewers.length) {
     rows.push(`<div class="row"><span class="k">reviewers that asked for changes</span>${reviewers.map(([r, x]) =>
       `<span>${esc(SHORT[r] || r)} <b>${x.changes} of ${x.asked}</b></span>`).join('')}</div>`)
+  }
+  const failures = Object.entries(t.failures).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+  if (failures.length) {
+    rows.push(`<div class="row" title="./fx retro says where a fix would go"><span class="k">why rounds went back</span>${
+      failures.map(([label, n]) => `<span>${esc(label)} <b>${n}</b></span>`).join('')}</div>`)
   }
   const timed = STATIONS.filter((st) => t.stages[st])
   if (timed.length) {
