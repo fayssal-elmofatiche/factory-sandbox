@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""Replay past jobs on other models, and compare the results with the original.
+
+Public benchmarks say little about how a model does on this repository. A
+replay runs a job the factory already did again, from the same starting commit
+and the same sealed spec, with a different model at one or more stations, and
+counts what happened: gate passes, rounds, approvals, cost and why rounds went
+back (labels.py).
+
+Usage:
+  bench plan <job>... --try <stage=model[,stage=model]> [--try ...]
+             [--name <bench>] [--max-usd <dollars>]
+                         set up one case per job and --try: a scratch worktree at
+                         the job's starting commit, and its issue, intake and
+                         spec copied into factory/bench/<bench>/<case>/
+  bench run <bench>      start the agents on the planned cases (not built yet:
+                         it needs the deterministic driver loop)
+  bench report <bench> [--json]
+                         each --try against the jobs as they first ran
+  bench list             the benches and how many of their cases have run
+  bench clean <bench>    remove the scratch worktrees; the results are kept
+
+Stages: builder, approver, and the reviewer lenses code, ux, ui, security.
+Models: haiku, sonnet, opus, fable. The spec is never re-written: every case
+builds from the spec the original job sealed, so the spec writer is not a stage.
+
+A replay spends real tokens. `plan` prints a rough estimate per case, from the
+original job's cost and the price of the builder's model, and refuses to set up
+a bench whose estimate is over --max-usd.
+"""
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import labels
+import portable
+
+if __name__ == "__main__":
+    portable.utf8()
+
+REPO = Path(__file__).resolve().parents[2]
+FACTORY = REPO / "factory"
+JOBS = FACTORY / "jobs"
+BENCH = FACTORY / "bench"
+CONFIG = json.loads((FACTORY / "config.json").read_text())
+
+MODELS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5",
+          "opus": "claude-opus-5-5", "fable": "claude-fable-5-2"}
+FIXED = {"builder": "opus", "approver": "opus"}  # set in the agents' frontmatter
+LENSES = {"code", "ux", "ui", "security"}
+STAGES = set(FIXED) | LENSES
+COPIED = ("issue.md", "intake.md", "spec.md")
+AS_RUN = "as run"
+MEANING = ("approved means the approver wrote APPROVE after the gate and every reviewer passed. "
+           "Until the acceptance tests land, that is all \"passed\" means: no independent check "
+           "that the change does what the issue asked.")
+
+
+def die(msg, code=1):
+    print(f"bench: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def git(*args, cwd=REPO, check=True):
+    res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if check and res.returncode != 0:
+        die(f"`git {' '.join(args)}` failed: {(res.stderr or res.stdout).strip()}")
+    return res
+
+
+# ---- reading jobs -----------------------------------------------------------
+
+
+def load_job(job_id):
+    path = JOBS / job_id / "job.json"
+    if not path.exists():
+        die(f"no job {job_id} in factory/jobs/")
+    return json.loads(path.read_text())
+
+
+def have(rev):
+    return git("cat-file", "-e", f"{rev}^{{commit}}", check=False).returncode == 0
+
+
+def start_commit(job_dir, job):
+    """The commit the job's builder started from: the base when the worktree was
+    made, recorded on the job's first move into spec or build. A job from before
+    events.jsonl existed starts where its branch forked from the base: the merge
+    base of the commit the gate passed and the base as it was before the merge."""
+    events = job_dir / "events.jsonl"
+    if events.exists():
+        for line in events.read_text().splitlines():
+            e = json.loads(line)
+            if e.get("event") == "advance" and e.get("to") in {"spec", "build"} and e.get("commit"):
+                return e["commit"]
+    tip = job.get("gated_sha")
+    if not tip:
+        return None
+    base = f"{job['merged_sha']}^1" if job.get("merged_sha") else f"origin/{CONFIG['base_branch']}"
+    if not (have(tip) and have(base)):
+        git("fetch", "-q", "origin", check=False)
+    res = git("merge-base", tip, base, check=False)
+    return res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else None
+
+
+def price(model):
+    p = CONFIG.get("prices_usd_per_mtok", {}).get(MODELS[model])
+    return (p["input"] + p["output"]) if p else None
+
+
+def parse_try(text):
+    choice = {}
+    for part in text.split(","):
+        stage, sep, model = part.strip().partition("=")
+        if not sep:
+            die(f"--try {text!r}: write stage=model, e.g. builder=sonnet")
+        if stage not in STAGES:
+            die(f"--try {text!r}: {stage!r} is not a stage; use one of {', '.join(sorted(STAGES))}")
+        if model not in MODELS:
+            die(f"--try {text!r}: {model!r} is not a model; use one of {', '.join(MODELS)}")
+        if stage in choice:
+            die(f"--try {text!r}: {stage} is given twice")
+        choice[stage] = model
+    return choice
+
+
+def try_label(choice):
+    return ",".join(f"{k}={choice[k]}" for k in sorted(choice))
+
+
+def estimate(job, choice):
+    """Rough: the job's own cost, scaled by the price of the builder's model.
+    The builder is most of a job's tokens; the reviewers are left as they were."""
+    cost = float(job.get("cost_usd") or 0.0)
+    old, new = price(FIXED["builder"]), price(choice.get("builder", FIXED["builder"]))
+    return cost * (new / old) if old and new else cost
+
+
+# ---- plan -------------------------------------------------------------------
+
+
+def cmd_plan(ns):
+    choices = [parse_try(t) for t in ns.try_]
+    if len({try_label(c) for c in choices}) != len(choices):
+        die("the same --try is given twice")
+    name = ns.name or time.strftime("%Y%m%d-%H%M%S")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        die(f"bench name {name!r}: letters, digits, dot, dash and underscore only")
+    root = BENCH / name
+    if root.exists():
+        die(f"factory/bench/{name} exists already; pick another --name or `bench clean` and delete it")
+
+    # Check everything before creating anything: a refused plan leaves no trace.
+    cases = []
+    for job_id in dict.fromkeys(ns.jobs):
+        job = load_job(job_id)
+        d = JOBS / job_id
+        missing = [f for f in COPIED if not (d / f).exists()]
+        if missing:
+            die(f"{job_id} has no spec to replay yet (missing {', '.join(missing)}): "
+                "only a job that reached the build can be replayed")
+        commit = start_commit(d, job)
+        if not commit:
+            die(f"{job_id} has no starting commit: none in events.jsonl, and no commit the gate passed")
+        reviewers = (job.get("agents") or {}).get("reviewers") or {}
+        for choice in choices:
+            lenses = set(choice) & LENSES
+            if lenses - set(reviewers):
+                die(f"{job_id} was not reviewed by {', '.join(sorted(lenses - set(reviewers)))}")
+            models = {**FIXED, **reviewers, **choice}
+            cases.append({"job": job_id, "start_commit": commit, "try": try_label(choice),
+                          "models": models, "estimate_usd": round(estimate(job, choice), 2)})
+    total = sum(c["estimate_usd"] for c in cases)
+    if ns.max_usd is not None and total > ns.max_usd:
+        die(f"the estimate is ${total:.2f}, over --max-usd ${ns.max_usd:.2f}; drop a job or a --try")
+
+    if not all(have(c["start_commit"]) for c in cases):
+        git("fetch", "-q", "origin")
+    root.mkdir(parents=True)
+    for n, case in enumerate(cases, 1):
+        slug = re.sub(r"[^a-z0-9]+", "-", case["try"].lower()).strip("-")
+        folder = root / f"{case['job']}--{slug}"
+        folder.mkdir()
+        for f in COPIED:
+            shutil.copyfile(JOBS / case["job"] / f, folder / f)
+        wt = Path(".worktrees") / f"bench-{name}-{n}"
+        git("worktree", "add", "-q", "--detach", str(wt), case["start_commit"])
+        case.update({"worktree": wt.as_posix(), "status": "planned", "cost_usd": None})
+        (folder / "case.json").write_text(json.dumps(case, indent=2) + "\n")
+        print(f"  {folder.name}  from {case['start_commit'][:7]}  estimate ${case['estimate_usd']:.2f}")
+    print(f"Planned factory/bench/{name}: {len(cases)} case(s), estimate ${total:.2f} "
+          "(rough: the original cost scaled by the builder's price).")
+    print(f"Nothing has run. `bench run {name}` will start the agents once the driver loop exists.")
+    return 0
+
+
+# ---- report -----------------------------------------------------------------
+
+
+def last_round(folder):
+    rounds = [n for p in folder.glob("round-*") if (n := labels.round_number(p))]
+    return max(rounds) if rounds else 0
+
+
+def first_word(path):
+    return path.read_text(errors="replace").split(None, 1)[0] if path.exists() and path.stat().st_size else None
+
+
+def outcome(folder, rounds):
+    gate = (folder / f"round-{rounds}" / "checks.md") if rounds else None
+    return {
+        "gate_passed": bool(gate and gate.exists() and re.match(r"GATE:\s*PASS", gate.read_text())),
+        "approved": first_word(folder / "decision.md") == "APPROVE",
+        "failures": labels.job_failures(folder),
+    }
+
+
+def add(row, rounds, result, cost):
+    row["ran"] += 1
+    row["rounds"].append(rounds)
+    row["gate_passed"] += result["gate_passed"]
+    row["approved"] += result["approved"]
+    for f in result["failures"]:
+        row["failures"][f["label"]] = row["failures"].get(f["label"], 0) + 1
+    if cost is not None:
+        row["cost_usd"] = round((row["cost_usd"] or 0.0) + cost, 2)
+
+
+def new_row(label):
+    return {"try": label, "cases": 0, "ran": 0, "gate_passed": 0, "approved": 0,
+            "rounds": [], "cost_usd": None, "failures": {}}
+
+
+def cmd_report(ns):
+    root = BENCH / ns.bench
+    if not root.is_dir():
+        die(f"no bench {ns.bench} in factory/bench/")
+    rows = {AS_RUN: new_row(AS_RUN)}
+    jobs = []
+    for folder in sorted(p for p in root.iterdir() if (p / "case.json").exists()):
+        case = json.loads((folder / "case.json").read_text())
+        row = rows.setdefault(case["try"], new_row(case["try"]))
+        row["cases"] += 1
+        rounds = last_round(folder)
+        if rounds:
+            add(row, rounds, outcome(folder, rounds), case.get("cost_usd"))
+        if case["job"] not in jobs:
+            jobs.append(case["job"])
+    base = rows[AS_RUN]
+    for job_id in jobs:
+        base["cases"] += 1
+        job = load_job(job_id)
+        result = outcome(JOBS / job_id, job.get("round") or 0)
+        result["approved"] = result["approved"] or job.get("stage") == "merged"
+        add(base, job.get("round") or 0, result, float(job.get("cost_usd") or 0.0))
+
+    ordered = [rows[AS_RUN]] + [rows[k] for k in sorted(rows) if k != AS_RUN]
+    if ns.json:
+        print(json.dumps({"bench": ns.bench, "jobs": jobs, "rows": ordered, "meaning": MEANING}, indent=2))
+        return 0
+    print(f"Bench {ns.bench}: {len(jobs)} job(s). Counts, not rates.\n")
+    width = max(len(r["try"]) for r in ordered)
+    print(f"  {'try':<{width}}  ran  gate  approved  rounds  cost    why rounds went back")
+    for r in ordered:
+        cost = f"${r['cost_usd']:.2f}" if r["cost_usd"] is not None else "–"
+        rounds = "/".join(map(str, r["rounds"])) or "–"
+        top = ", ".join(f"{k} {v}" for k, v in sorted(r["failures"].items(), key=lambda kv: (-kv[1], kv[0])))
+        print(f"  {r['try']:<{width}}  {r['ran']}/{r['cases']:<2} {r['gate_passed']:>4}  {r['approved']:>8}  "
+              f"{rounds:>6}  {cost:<7} {top or '–'}")
+    print(f"\n{MEANING}")
+    return 0
+
+
+# ---- list, clean, run -------------------------------------------------------
+
+
+def benches():
+    return sorted(p for p in BENCH.iterdir() if p.is_dir()) if BENCH.is_dir() else []
+
+
+def cases_of(root):
+    return [json.loads(p.read_text()) for p in sorted(root.glob("*/case.json"))]
+
+
+def cmd_list(_ns):
+    found = benches()
+    if not found:
+        print("No benches yet. `bench plan <job> --try builder=sonnet` sets one up.")
+    for root in found:
+        cases = cases_of(root)
+        ran = sum(1 for p in root.iterdir() if p.is_dir() and last_round(p))
+        print(f"  {root.name}  {len(cases)} case(s), {ran} run, "
+              f"tries: {', '.join(sorted({c['try'] for c in cases})) or '–'}")
+    return 0
+
+
+def cmd_clean(ns):
+    root = BENCH / ns.bench
+    if not root.is_dir():
+        die(f"no bench {ns.bench} in factory/bench/")
+    removed = 0
+    for case in cases_of(root):
+        wt = REPO / case["worktree"]
+        if wt.exists():
+            git("worktree", "remove", "--force", str(wt), check=False)
+            if wt.exists():
+                shutil.rmtree(wt, ignore_errors=True)
+            removed += 1
+    git("worktree", "prune", check=False)
+    print(f"Removed {removed} worktree(s). The results stay in factory/bench/{ns.bench}/.")
+    return 0
+
+
+def cmd_run(ns):
+    die(f"`bench run {ns.bench}` is not built yet. Starting the builder and reviewers with no one at the "
+        "keyboard needs the deterministic driver loop (upflow 4fk4d); bench run will use it once it "
+        "lands. Until then the planned cases wait in factory/bench/.", code=2)
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="bench", description=__doc__.split("\n\n")[0])
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("plan", help="set up replay cases")
+    p.add_argument("jobs", nargs="+", help="job ids from factory/jobs/")
+    p.add_argument("--try", dest="try_", action="append", required=True, metavar="STAGE=MODEL[,...]",
+                   help="one model choice; repeat for more")
+    p.add_argument("--name", help="the bench's name (default: the time)")
+    p.add_argument("--max-usd", type=float, help="refuse if the estimate is over this")
+    for name in ("run", "report", "clean"):
+        q = sub.add_parser(name)
+        q.add_argument("bench")
+        if name == "report":
+            q.add_argument("--json", action="store_true")
+    sub.add_parser("list")
+    ns = parser.parse_args(argv)
+    return {"plan": cmd_plan, "run": cmd_run, "report": cmd_report,
+            "list": cmd_list, "clean": cmd_clean}[ns.cmd](ns)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
