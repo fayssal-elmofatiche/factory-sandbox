@@ -65,8 +65,8 @@ Run the netstat line again afterwards: it must print nothing.
 
 - The flow does what the spec promises, with no dead ends.
 - Loading, empty and error states exist and say something useful.
-- Each kind of user the change affects (signed out, signed in, different roles)
-  gets a sensible path, following the patterns the app already uses.
+- Each kind of user the change affects (a trader, the market operator) gets a
+  sensible path, following the patterns the app already uses.
 - The copy is short, plain and consistent with the rest of the app.
 - Accessibility: real buttons and links, labels, focus order, keyboard use, and
   alt text.
