@@ -625,7 +625,7 @@ CONFIG_KEYS = {
 def cmd_config(args):
     cfg = config()
     if not args:
-        print(f"  tracker        {cfg.get('tracker', 'github')}")
+        print(f"  tracker        {cfg.get('tracker', 'files')}")
         for key in ("concurrency", "max_rounds", "merge_method"):
             print(f"  {key:<14} {cfg[key]}")
         for risk, reviewers in cfg["routing"].items():
