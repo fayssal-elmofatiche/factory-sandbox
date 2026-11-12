@@ -615,6 +615,7 @@ def test_a_branch_within_budget_merges_on_its_own(sb):
     job_id = approved_change(sb, "dayahead/orderbook.py", "\n# Cleared by merit order.\n")
     checks = (sb.dir(job_id) / "round-1" / "checks.md").read_text()
     assert "BUDGET: WITHIN" in checks and "| clearing_ops |" in checks and "+0.0%" in checks
+    assert "| clearing_ops | 0 |" not in checks  # a tracer that counts nothing must not pass
     sb.job("merge", job_id)
     assert sb.state(job_id)["stage"] == "merged"
 

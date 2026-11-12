@@ -14,9 +14,11 @@ compares them against `budgets` in config.json:
 Metrics, measured on a fixed order book (FIXTURE, seeded, 24 hours):
 
   clearing_ops   Python bytecode instructions executed by OrderBook.results(),
-                 counted with a tracer. Deterministic: the same code gives the
-                 same number on every run and every load, so a 10% budget never
-                 flakes. It counts work done in Python; time spent in C code or
+                 counted with sys.monitoring (3.12+) or sys.settrace (older).
+                 A count of zero means the tracer failed: the tree counts as
+                 not measured, never as within budget. Deterministic: the
+                 same code gives the same number on every run and every load,
+                 so a 10% budget never flakes. It counts work done in Python; time spent in C code or
                  waiting (time.sleep, I/O) is not counted.
   clearing_ms    Median wall-clock milliseconds of RUNS untraced calls. Reported
                  for information. It moves by tens of percent when the machine
@@ -59,17 +61,29 @@ for i in range(24 * 24):
                          price=round(rng.uniform(-50, 300), 2)))
 
 ops = 0
-def tracer(frame, event, arg):
-    global ops
-    frame.f_trace_opcodes = True
-    if event == "opcode":
-        ops += 1
-    return tracer
-
 book.results()  # warm up
-sys.settrace(tracer)
-book.results()
-sys.settrace(None)
+if hasattr(sys, "monitoring"):  # 3.12+: 3.12's settrace reports no opcode events this way
+    mon = sys.monitoring
+    def count(code, offset):
+        global ops
+        ops += 1
+    mon.use_tool_id(mon.PROFILER_ID, "budget")
+    mon.register_callback(mon.PROFILER_ID, mon.events.INSTRUCTION, count)
+    mon.set_events(mon.PROFILER_ID, mon.events.INSTRUCTION)
+    book.results()
+    mon.set_events(mon.PROFILER_ID, 0)
+else:
+    def tracer(frame, event, arg):
+        global ops
+        frame.f_trace_opcodes = True
+        if event == "opcode":
+            ops += 1
+        return tracer
+    sys.settrace(tracer)
+    book.results()
+    sys.settrace(None)
+if not ops:
+    sys.exit(f"counted no instructions: Python {sys.version.split()[0]}'s tracer reported none")
 times = []
 for _ in range(int(sys.argv[2])):
     start = time.perf_counter()
