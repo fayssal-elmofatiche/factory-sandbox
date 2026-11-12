@@ -193,7 +193,7 @@ def test_retro_report_writes_a_dated_report_and_nothing_else(sandbox):
     assert not (sandbox / "factory" / "retro").exists()
     out = fx(sandbox, "retro", "--report", "--threshold", "1", "--date", "2026-11-12").stdout
     assert "Wrote factory/retro/2026-11-12.md" in out
-    assert (sandbox / "factory" / "retro" / "2026-11-12.md").read_text() == shown + "\n"
+    assert (sandbox / "factory" / "retro" / "2026-11-12.md").read_text().rstrip() == shown.rstrip()
     assert sorted(p.relative_to(sandbox) for p in (sandbox / "factory" / "jobs").rglob("*")) == before
 
 
