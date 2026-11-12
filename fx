@@ -802,6 +802,11 @@ COMMANDS = [
     ("unqueue", "remove that label from an issue", None),
     ("status", "show the jobs and what the next run would do", None),
     ("watch", "show job files as they are written (Ctrl-C to stop)", None),
+    ("retro", "count why rounds went back, and propose where a fix would go",
+     "Counts the labels on every failed gate and every CHANGES review across the jobs:\n"
+     "lint, a failing test, a spec gap, a redundant test and so on. A label seen often\n"
+     "enough gets a proposal: the agent prompt or file a fix would most likely change.\n"
+     "A person makes that change; the factory can't edit its own setup. Read-only."),
     ("show", "a waiting job: the decision, the change, your options", None),
     ("approve", "approve a waiting job; the factory re-checks and merges",
      "Shows the job, asks, then approves it. The factory syncs the branch with the base,\n"
@@ -850,6 +855,9 @@ def build_parser():
                        ("park", "why it is stopped")):
         made[name].add_argument("words", nargs="*", help=f"{what}; left out, it comes from stdin or your editor")
     made["approve"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    made["retro"].add_argument("--threshold", type=int, default=3, help="propose a fix from this many (default 3)")
+    made["retro"].add_argument("--all", action="store_true", help="also count runs saved by `fx reset --keep`")
+    made["retro"].add_argument("--json", action="store_true", help="machine-readable output")
     made["config"].add_argument("key", nargs="?", choices=sorted(CONFIG_KEYS), metavar="key",
                                 help="one of: " + ", ".join(sorted(CONFIG_KEYS)))
     made["config"].add_argument("value", nargs="?", help="the new value")
@@ -885,6 +893,9 @@ def dispatch(ns):
         return cmd_watch()
     if cmd == "show":
         return job("show", ns.job)
+    if cmd == "retro":
+        args = ["--threshold", ns.threshold] + (["--all"] if ns.all else []) + (["--json"] if ns.json else [])
+        return subprocess.run(portable.script(FACTORY / "bin" / "retro", *args), cwd=REPO).returncode
     if cmd == "approve":
         return cmd_approve([ns.job] + (["--yes"] if ns.yes else []))
     if cmd == "retry":

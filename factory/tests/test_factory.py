@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
@@ -913,3 +913,54 @@ def test_a_job_folder_never_exists_without_its_job_json(sb):
     source = (sb.repo / "factory" / "bin" / "job").read_text(encoding="utf-8")
     body = source.split("def cmd_create(", 1)[1].split("\ndef ", 1)[0]
     assert body.index("save(job)") < body.index("write_issue_md(job)")
+
+
+# ---- failure labels: why rounds went back --------------------------------------
+
+
+
+def retro(sb, *args, check=True):
+    return sh([str(sb.repo / "factory/bin/retro"), *args], sb.repo, check=check)
+
+
+def test_sync_counts_the_labels_of_every_round(sb):
+    job_id = sb.to_build()
+    assert gate_after(sb, job_id, path="dayahead/lint_me.py", text="import os\n").returncode == 1
+    sb.job("advance", job_id, "build")
+    sh(["git", "rm", "-q", "dayahead/lint_me.py"], sb.wt(job_id))
+    sb.commit(job_id, path="dayahead/seed.py")
+    sb.built(job_id)
+    sb.job("advance", job_id, "gate")
+    assert sb.gate(job_id).returncode == 0
+    sb.job("advance", job_id, "review")
+    (sb.dir(job_id) / "round-2" / "review-code.md").write_text(
+        "VERDICT: CHANGES\n\n## Summary\n- x\n\n## Findings\n"
+        "1. [redundant-test] tests/test_a.py:3 repeats test_b\n2. dayahead/seed.py:1 untagged\n")
+    sb.job("advance", job_id, "build")
+    assert sb.state(job_id)["failures"] == {"gate:lint": 1, "redundant-test": 1, "unlabelled": 1}
+
+
+def test_a_job_with_no_failures_has_empty_counts(sb):
+    job_id = sb.to_approved()
+    assert sb.state(job_id)["failures"] == {}
+
+
+def test_retro_counts_labels_across_jobs_and_proposes_a_fix_past_the_threshold(sb):
+    for _ in range(2):
+        job_id = sb.to_review()
+        (sb.dir(job_id) / "round-1" / "review-code.md").write_text(
+            "VERDICT: CHANGES\n\n## Findings\n1. [missing-test] a.py:1 x\n2. [missing-test] b.py:2 y\n")
+        sb.job("advance", job_id, "build")
+    out = retro(sb, "--threshold", "3").stdout
+    assert "missing-test" in out and "4" in out
+    assert "Propose" in out and ".claude/agents/builder.md" in out
+    quiet = retro(sb, "--threshold", "5").stdout
+    assert "missing-test" in quiet and "Propose" not in quiet
+    data = json.loads(retro(sb, "--json").stdout)
+    assert data["labels"]["missing-test"]["count"] == 4
+    assert len(data["labels"]["missing-test"]["where"]) == 4
+
+
+def test_retro_with_no_jobs_says_so(sb):
+    out = retro(sb).stdout
+    assert "No failures" in out
