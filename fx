@@ -304,6 +304,14 @@ def cmd_run(args, prompt=None):
     os.execvp("claude", ["claude", prompt])
 
 
+def cmd_drive(args):
+    if not shutil.which("claude") and not os.environ.get("FACTORY_DRIVE_CLAUDE"):
+        die("Claude Code is not installed; run ./fx doctor")
+    if not is_set_up():
+        cmd_setup(quiet=True)
+    return subprocess.run(portable.script(FACTORY / "bin" / "drive", *args), cwd=REPO).returncode
+
+
 # ---- issues and jobs -------------------------------------------------------
 
 
@@ -803,6 +811,12 @@ COMMANDS = [
      "sweep.max_issues findings (config.json) as issues WITHOUT the factory label,\n"
      "skipping any that match an open issue. Nothing it files runs until you queue it\n"
      "with `fx queue <issue>`. It writes no code."),
+    ("drive", "run the factory with no one watching: a script moves the jobs",
+     "Runs factory/bin/drive: the same steps as /factory run, taken by a script instead of a\n"
+     "Claude Code session. Each agent runs as its own headless `claude -p` process, with the\n"
+     "factory's guard passed on its command line. It stops when nothing more can run and\n"
+     "prints the summary; run it again to resume. Agents run unattended on this machine's\n"
+     "credentials: use it in a container, with a spending limit and max_cost_usd set."),
     ("issues", "list the issues: ref, state, labels, title", None),
     ("queue", "label an issue so the next run picks it up", None),
     ("unqueue", "remove that label from an issue", None),
@@ -855,6 +869,7 @@ def build_parser():
     made["run"].add_argument("issue", nargs="?", help="run only this issue")
     made["sweep"].add_argument("kind", choices=["perf", "security", "cleanup", "docs"],
                                help="perf, security, cleanup or docs")
+    made["drive"].add_argument("issue", nargs="?", help="run only this issue")
     made["queue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     made["unqueue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     for name in ("show", "approve", "feedback", "reject", "retry", "park"):
@@ -893,6 +908,8 @@ def dispatch(ns):
         return cmd_run([ns.issue] if ns.issue else [])
     if cmd == "sweep":
         return cmd_run([], prompt=f"/factory sweep {ns.kind}")
+    if cmd == "drive":
+        return cmd_drive([ns.issue] if ns.issue else [])
     if cmd == "issues":
         return job("issues")
     if cmd in {"queue", "unqueue"}:

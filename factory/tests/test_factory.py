@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "drive"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
