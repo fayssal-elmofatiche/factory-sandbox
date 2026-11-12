@@ -216,7 +216,7 @@ class GitHubTracker:
 # The files tracker: factory/issues/<n>.md
 #
 #   ---
-#   title: Show seats left on the events page
+#   title: Show the day's base and peak price on the prices page
 #   state: open
 #   labels: factory
 #   author: ada

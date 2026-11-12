@@ -72,9 +72,9 @@ Run the netstat line again afterwards: it must print nothing.
 
 If the branch has no user-facing change, write PASS and say so.
 
-## Who uses evently
+## Who uses dayahead
 
-Two kinds of user: attendees, who look at the events page to see what is on and whether seats are left, and organisers, who manage registrations and the waitlist. There is no sign-in yet, so the events page is public.
+Two kinds of user: traders, who place bids and offers and look at the prices page to see each hour's clearing price and volume, and the market operator, who runs the auction. There is no sign-in yet, so the prices page is public.
 
 ## Write review-ux.md
 

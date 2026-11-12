@@ -105,7 +105,7 @@ An issue is a Markdown file, `factory/issues/<number>.md`:
 
 ```markdown
 ---
-title: Show seats left on the events page
+title: Show the day's base and peak price on the prices page
 state: open
 labels: factory
 author: ada

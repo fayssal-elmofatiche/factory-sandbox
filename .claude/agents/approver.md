@@ -64,8 +64,8 @@ ESCALATE if any of them fails, or if the change:
 - removes or weakens an existing test;
 - migrates a database schema, sends email, writes production data, or adds a
   dependency;
-- exposes attendee emails anywhere, adds an export of attendee data, or adds
-  an endpoint that changes registrations;
+- shows which participant placed which order anywhere, adds an export of
+  per-participant order data, or adds an endpoint that places or changes orders;
 - rests on a spec Assumption that is really a product or business decision, such
   as pricing, public copy about the business, or what is free versus paid.
 

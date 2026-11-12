@@ -56,9 +56,9 @@ is in the main checkout; your one file goes there.
 
 ## This project's hot spots
 
-- `evently/web.py`: every string that reaches HTML must go through `html.escape`; event titles and emails are user input.
-- Attendee emails are personal data: they must never appear on a public page, in a log line or in an error message.
-- Any new endpoint that changes data or exports attendees needs an explicit access check; the app has no auth today, so adding one is a security change.
+- `dayahead/web.py`: every string that reaches HTML must go through `html.escape`; the bidding-zone name, participant names and order ids are user input.
+- Who bid or offered what is commercially sensitive: a participant's name next to its orders must never appear on a public page, in a log line or in an error message. The public page shows only hourly aggregates.
+- Any new endpoint that places, changes or cancels orders, or exports per-participant order data, needs an explicit access check; the app has no auth today, so adding one is a security change.
 - The server binds to 127.0.0.1; flag any change that binds to 0.0.0.0.
 
 ## Write review-security.md

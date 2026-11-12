@@ -631,7 +631,7 @@ EXAMPLES = """examples:
   fx queue 2 && fx run       queue issue 2, then run the factory
   fx config review.low sonnet
   fx show 1 && fx approve 1  look at a job that waits for you, then approve it
-  fx feedback 1 use the same wording as the events page
+  fx feedback 1 use the same wording as the prices page
   fx reset --keep            start again, keeping your setup and a copy of this run
 
 Run `fx <command> --help` for the details of one command."""

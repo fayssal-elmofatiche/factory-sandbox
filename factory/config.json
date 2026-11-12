@@ -22,7 +22,7 @@
     "security": { "security": "opus" }
   },
   "surface_paths": {
-    "evently/web.py": ["ui", "security"]
+    "dayahead/web.py": ["ui", "security"]
   },
   "protected_paths": [
     "factory/checks.sh",
