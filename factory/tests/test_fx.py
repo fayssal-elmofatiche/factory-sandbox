@@ -391,3 +391,77 @@ def test_doctor_says_whether_the_folder_is_trusted(sandbox, tmp_path, monkeypatc
     (home / ".claude.json").write_text(json.dumps(record))
     out = fx(sandbox, "doctor", check=False).stdout
     assert re.search(r"ok\s+folder trusted in Claude Code", out)
+
+
+# ---- found by the November 2026 review ---------------------------------------
+
+def test_config_commits_only_the_config_file(sandbox):
+    with open(sandbox / "dayahead" / "seed.py", "a") as f:
+        f.write("# staged by hand\n")
+    run(["git", "add", "dayahead/seed.py"], cwd=sandbox)
+    fx(sandbox, "config", "concurrency", "2")
+    committed = run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=sandbox).stdout.split()
+    assert committed == ["factory/config.json"]
+    assert "dayahead/seed.py" in run(["git", "diff", "--cached", "--name-only"], cwd=sandbox).stdout
+
+
+def test_config_does_not_push_another_branch_onto_the_base(sandbox):
+    before = run(["git", "rev-parse", "origin/main"], cwd=sandbox).stdout
+    run(["git", "checkout", "-q", "-b", "side"], cwd=sandbox)
+    out = fx(sandbox, "config", "concurrency", "2").stdout
+    run(["git", "fetch", "-q", "origin"], cwd=sandbox)
+    assert run(["git", "rev-parse", "origin/main"], cwd=sandbox).stdout == before
+    assert "Not pushed" in out and "side" in out
+
+
+def test_reset_leaves_claude_codes_local_files_alone(sandbox):
+    local = sandbox / ".claude" / "settings.local.json"
+    local.write_text('{"mine": true}\n')
+    inside = sandbox / ".claude" / "worktrees" / "wip" / "notes.txt"
+    inside.parent.mkdir(parents=True)
+    inside.write_text("work in progress\n")
+    agent = sandbox / ".claude" / "agents" / "intake.md"
+    with open(agent, "a", encoding="utf-8", newline="\n") as f:
+        f.write("\nA setup change.\n")
+    merge_a_job(sandbox)
+    fx(sandbox, "reset", "--yes")
+    assert local.read_text() == '{"mine": true}\n' and inside.read_text() == "work in progress\n"
+    assert "A setup change." in agent.read_text(encoding="utf-8")  # the setup is still kept
+    tracked = run(["git", "ls-files", ".claude"], cwd=sandbox).stdout
+    assert "settings.local.json" not in tracked and "worktrees" not in tracked
+
+
+def test_reset_keeps_a_new_setup_file_and_keeps_a_deleted_one_deleted(sandbox):
+    new = sandbox / ".claude" / "agents" / "reviewer-docs.md"
+    new.write_text("---\nname: reviewer-docs\n---\n")
+    gone = sandbox / ".claude" / "agents" / "reviewer-ui.md"
+    gone.unlink()
+    fx(sandbox, "reset", "--yes")
+    assert new.exists() and not gone.exists()
+    assert run(["git", "status", "--porcelain"], cwd=sandbox).stdout.strip() == ""
+
+
+def test_reset_says_which_new_issue_files_it_deletes(sandbox):
+    run([str(sandbox / "factory" / "bin" / "job"), "new-issue", "Mine"], cwd=sandbox, stdin="body")
+    out = fx(sandbox, "reset", check=False, stdin="no\n").stdout
+    assert "delete 1 issue file(s) written since: 7.md" in out
+
+
+def test_reset_refuses_while_an_earlier_resets_copy_is_still_there(sandbox):
+    git_dir = Path(run(["git", "rev-parse", "--absolute-git-dir"], cwd=sandbox).stdout.strip())
+    (git_dir / "fx" / "setup-aside").mkdir(parents=True)
+    res = fx(sandbox, "reset", "--yes", check=False)
+    assert res.returncode != 0 and "stopped half-way" in res.stderr
+
+
+def test_down_never_stops_a_process_that_is_not_the_dashboard(sandbox):
+    """A process id is reused after a reboot: the recorded one may be anything by now."""
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        git_dir = Path(run(["git", "rev-parse", "--absolute-git-dir"], cwd=sandbox).stdout.strip())
+        (git_dir / "fx").mkdir(exist_ok=True)
+        (git_dir / "fx" / "dashboard.json").write_text(json.dumps({"pid": other.pid, "port": 8999}))
+        assert "not running" in fx(sandbox, "down").stdout
+        assert other.poll() is None
+    finally:
+        other.kill()

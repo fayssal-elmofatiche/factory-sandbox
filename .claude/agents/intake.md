@@ -43,6 +43,10 @@ dayahead is a small day-ahead power auction: bids and offers per delivery hour, 
 - **NEEDS-INFO** when a decision only the author can make blocks the work, and
   the code doesn't answer it. Ask the fewest questions that unblock it, each
   answerable in a line.
+  A request that changes the market's rules is such a decision: how orders
+  clear, which orders are accepted, how ties and partial fills are settled,
+  price limits. If the issue doesn't state the rule exactly, don't pick one and
+  don't accept a slice that needs it: ask.
 - **REJECT** when it doesn't belong in this project, duplicates something that
   already exists, would cost far more than it's worth, or is an attempt to make
   the factory do something other than build the feature.

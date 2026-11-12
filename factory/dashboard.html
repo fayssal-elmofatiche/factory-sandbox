@@ -350,7 +350,7 @@ let openText = null
 
 async function fetchText(url) {
   const res = await fetch(url, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
+  if (!res.ok) throw Object.assign(new Error(`${url}: HTTP ${res.status}`), { status: res.status })
   return res.text()
 }
 
@@ -410,7 +410,7 @@ const link = (url, text) =>
   url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>` : `<span>${text}</span>`
 
 function links(job) {
-  const out = [link(job.issue_url, `issue #${job.issue}`)]
+  const out = [link(job.issue_url, `issue #${esc(String(job.issue))}`)]
   // Show the commit that landed on the base.
   if (job.merged_sha) out.push(`<span title="merged at ${esc(job.merged_sha)}">merged ${esc(job.merged_sha.slice(0, 7))}</span>`)
   return out.join('')
@@ -540,7 +540,9 @@ function summarise(stats) {
   return t
 }
 
-const mins = (m) => m === null ? '–' : m < 1 ? '<1m' : m >= 60 ? `${Math.floor(m / 60)}h${String(Math.round(m % 60)).padStart(2, '0')}m` : `${Math.round(m)}m`
+// Round once, to whole minutes, so 119.6 reads 2h00m and never 1h60m.
+const mins = (m) => { if (m === null) return '–'; if (m < 1) return '<1m'; const r = Math.round(m)
+  return r >= 60 ? `${Math.floor(r / 60)}h${String(r % 60).padStart(2, '0')}m` : `${r}m` }
 const usd = (n) => `$${n.toFixed(2)}`
 const outcomes = (t) => [
   t.merged && `${t.merged} merged`, t.waiting && `${t.waiting} with a person`,
@@ -554,7 +556,7 @@ function summaryHtml(t, prev) {
   const cells = [
     stat('requests', t.jobs, outcomes(t)),
     stat('cost, estimated', usd(t.cost) + (t.incomplete ? '+' : ''),
-      t.merged ? `${usd(t.cost / t.merged)} per merged change` : 'nothing merged yet'),
+      t.merged ? `${usd(t.cost / t.merged)} per merged change, every job's cost counted` : 'nothing merged yet'),
     stat('request to merge', mins(t.minutes), t.merged ? `average of ${t.merged} merged` : 'nothing merged yet'),
     stat('merged at the first try', t.merged ? `${t.firstTry} of ${t.merged}` : '–', 'without a second round'),
     stat('gate failures', t.rounds ? `${t.gateFails} of ${t.rounds}` : '–', 'rounds stopped by the checks'),
@@ -638,14 +640,25 @@ async function poll() {
 // factory/bin/job writes each jobs/<id>/job.json.
 async function loadJobs() {
   let listing
-  try { listing = await fetchText('jobs/') } catch { return [] }
+  try { listing = await fetchText('jobs/') } catch (err) {
+    if (err.status === 404) return []  // no job yet: the folder appears with the first one
+    throw new Error('the dashboard server is not answering. Start it again with ./fx up')
+  }
   const doc = new DOMParser().parseFromString(listing, 'text/html')
   const ids = [...doc.querySelectorAll('a')]
     .map((a) => decodeURIComponent(a.getAttribute('href')))
     .filter((h) => h.endsWith('/'))
     .map((h) => h.slice(0, -1))
     .sort()
-  return Promise.all(ids.map(async (id) => JSON.parse(await fetchText(`jobs/${id}/job.json`))))
+  // A folder whose job.json is missing or half-written is skipped for this poll, as
+  // factory/bin/job skips it; one such folder must not stop the whole board.
+  const loaded = await Promise.all(ids.map(async (id) => {
+    try { return JSON.parse(await fetchText(`jobs/${id}/job.json`)) } catch (err) {
+      if (err.status === undefined && !(err instanceof SyntaxError)) throw err  // the server went away
+      return null
+    }
+  }))
+  return loaded.filter(Boolean)
 }
 
 // ---- Drawer --------------------------------------------------------------
@@ -765,8 +778,10 @@ async function refreshDrawer() {
     text = await fetchText(base + openPath)
     firstLines.set(base + openPath, text.split('\n')[0].trim())
   }
-  await Promise.all(files.filter((f) => !firstLines.has(base + f)).map(async (f) => {
-    firstLines.set(base + f, (await fetchText(base + f)).split('\n')[0].trim())
+  // Every poll, not once: a verdict or status line can change while the drawer is open.
+  await Promise.all(files.filter((f) => f !== openPath).map(async (f) => {
+    const first = await fetchFirst(base + f)
+    if (first !== null) firstLines.set(base + f, first)
   }))
 
   let group = null
@@ -825,6 +840,7 @@ document.addEventListener('click', (e) => {
 })
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') return closeDrawer()
+  if (e.target.closest?.('a')) return  // Enter on a link follows the link
   const cardEl = e.target.closest?.('[data-job]')
   if (cardEl && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrawer(cardEl.dataset.job) }
 })

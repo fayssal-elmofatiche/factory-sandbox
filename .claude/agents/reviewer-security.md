@@ -58,7 +58,7 @@ is in the main checkout; your one file goes there.
 
 - `dayahead/web.py`: every string that reaches HTML must go through `html.escape`; the bidding-zone name, participant names and order ids are user input.
 - Who bid or offered what is commercially sensitive: a participant's name next to its orders must never appear on a public page, in a log line or in an error message. The public page shows only hourly aggregates.
-- Any new endpoint that places, changes or cancels orders, or exports per-participant order data, needs an explicit access check; the app has no auth today, so adding one is a security change.
+- The app has no sign-in. Whether an endpoint that places, changes or cancels orders, or an export of per-participant order data, may exist without one is a person's decision, and the approver escalates every such change. So don't ask the builder to add authentication, and don't write CHANGES for its absence: say under Notes that the change adds such an endpoint or export. Review everything else about it as usual (validation, escaping, what it exposes, state-changing requests that a GET or another site's page could trigger), and write CHANGES for those.
 - The server binds to 127.0.0.1; flag any change that binds to 0.0.0.0.
 
 ## Write review-security.md

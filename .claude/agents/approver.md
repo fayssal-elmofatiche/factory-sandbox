@@ -46,7 +46,9 @@ one file goes there.
 APPROVE only if all of these hold:
 
 - Every acceptance criterion in the spec is met, with evidence in build.md that
-  you find convincing. Spot-check at least one criterion yourself.
+  you find convincing. Spot-check at least one criterion yourself; for a
+  criterion about a page, start the dev server from AGENTS.md in the worktree
+  on the port in your prompt, look, and stop it again.
 - The final round's `checks.md` says `GATE: PASS`, every review in it is
   `VERDICT: PASS`, and no Note in them describes a real problem.
 - The change stays inside intake's Scope.
@@ -55,16 +57,18 @@ ESCALATE if any of them fails, or if the change:
 
 - touches money, access or identity: payments, auth, permissions, or database
   and storage security rules;
-- changes deploy, CI or hosting config, or `AGENTS.md`;
+- changes deploy, CI or hosting config, or changes `AGENTS.md` beyond describing
+  what this job built (a new file, page or command the spec asked to document
+  is fine; a changed rule, convention or instruction for agents is not);
 - removes or weakens an existing test;
 - migrates a database schema, sends email, writes production data, or adds a
   dependency;
 - shows which participant placed which order anywhere, adds an export of
   per-participant order data, or adds an endpoint that places or changes orders;
-- rests on a spec Assumption that is really a product or business decision, such
-  as pricing, public copy about the business, or what is free versus paid.
-
-Tailor these lists to the project: what must a human always see here?
+- rests on a spec Assumption that is really a market-design or business decision,
+  such as how orders clear or are filled, price limits, or what the public page
+  discloses. How a number is formatted or which hours count as peak, when the
+  issue states it, is not one.
 
 ## Write decision.md
 

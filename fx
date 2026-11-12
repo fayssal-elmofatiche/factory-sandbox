@@ -26,12 +26,18 @@ FACTORY = REPO / "factory"
 sys.path.insert(0, str(FACTORY / "bin"))
 import portable  # noqa: E402  (lives next to the factory's scripts)
 
+if __name__ == "__main__":
+    portable.utf8()
+
 JOB = FACTORY / "bin" / "job"
 DECK = REPO / "docs" / "presentation.html"
 TAG = "demo-start"  # the starting point `fx reset` returns to; moves when the setup changes
 ORIGIN_TAG = "demo-origin"  # the setup the sandbox was created with; `fx reset --setup` returns to it
 # The setup: what you change to run an experiment. Everything else a run produces is work.
 SETUP = ["factory/config.json", "factory/checks.sh", ".claude", "AGENTS.md"]
+# Inside .claude but not setup: Claude Code's own worktrees and this machine's private settings.
+# fx never copies, commits or deletes these.
+NOT_SETUP = (".claude/worktrees/", ".claude/settings.local.json")
 MODELS = {"haiku", "sonnet", "opus", "fable"}
 MIN_CLAUDE = (2, 1, 257)
 
@@ -111,7 +117,7 @@ def cmd_doctor():
     rows.append(("ok" if have("ruff") else "MISSING", "ruff", "" if have("ruff") else "pipx install ruff"))
 
     if have("claude"):
-        out = sh("claude", "--version").stdout
+        out = sh(shutil.which("claude"), "--version").stdout
         m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
         ver = tuple(int(x) for x in m.groups()) if m else None
         ok = ver is not None and ver >= MIN_CLAUDE
@@ -187,12 +193,24 @@ def dashboard_state():
         return None
     try:
         st = json.loads(path.read_text())
-        if not portable.alive(st["pid"]):
+        # A process id is reused after a reboot or a crash. Only a process that is alive
+        # and serves the dashboard on the recorded port is ours to report, or to stop.
+        if not portable.alive(st["pid"]) or not serves_dashboard(st["port"]):
             raise ValueError("the dashboard is gone")
         return st
     except (ValueError, KeyError, OSError):
         path.unlink(missing_ok=True)
         return None
+
+
+def serves_dashboard(port):
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/dashboard.html", timeout=2) as res:
+            return res.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
 
 
 def free_port(start=8765):
@@ -236,10 +254,14 @@ def cmd_up(args):
             [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
             cwd=FACTORY, stdout=log, stderr=log, **portable.own_group())
         st = {"pid": proc.pid, "port": port}
+        for _ in range(50):  # wait until it answers, so the next fx command recognises it
+            if proc.poll() is not None or serves_dashboard(port):
+                break
+            time.sleep(0.1)
+        if proc.poll() is not None or not serves_dashboard(port):
+            portable.stop(proc.pid)
+            die("the dashboard server did not start; see " + str(state_dir() / "dashboard.log"))
         (state_dir() / "dashboard.json").write_text(json.dumps(st))
-        time.sleep(0.4)
-        if proc.poll() is not None:
-            die("the dashboard server stopped at once; see " + str(state_dir() / "dashboard.log"))
     dash = f"http://127.0.0.1:{st['port']}/dashboard.html"
     print(f"dashboard     {dash}")
     if "--no-open" not in args:
@@ -318,6 +340,9 @@ def cmd_watch():
 # ---- a person's decisions --------------------------------------------------
 
 
+CUT = "#fx:"  # marks fx's own lines in the editor; a Markdown heading or "#12" is the person's text
+
+
 def words(args, what):
     """The text for a decision: the rest of the command line, stdin when it is
     piped, or whatever the person writes in their editor."""
@@ -333,14 +358,16 @@ def words(args, what):
     import shlex
     import tempfile
     with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False) as f:
-        f.write(f"\n# {what}\n# Lines starting with # are ignored. Leave it empty to cancel.\n")
+        f.write(f"\n{CUT} {what}\n{CUT} Lines starting with {CUT} are ignored. Leave it empty to cancel.\n")
         path = f.name
     try:
-        subprocess.run([*shlex.split(editor), path])
+        # posix=False keeps the backslashes of a Windows path such as C:\Tools\vim.exe.
+        command = shlex.split(editor, posix=not portable.WINDOWS)
+        subprocess.run([*(c.strip('"') for c in command), path])
         lines = Path(path).read_text().splitlines()
     finally:
         os.unlink(path)
-    return "\n".join(line for line in lines if not line.startswith("#")).strip()
+    return "\n".join(line for line in lines if not line.startswith(CUT)).strip()
 
 
 def decide(verb, args, what):
@@ -447,7 +474,10 @@ def cmd_setup(quiet=False):
         if old.returncode == 0:
             # Keep the place this checkout came from as `upstream`, for course updates.
             if sh("git", "remote", "get-url", "upstream").returncode == 0:
+                # `upstream` is taken, so the old origin can't be kept under that name. Say where it pointed.
                 sh("git", "remote", "remove", "origin", check=True)
+                done.append(f"old origin  {old.stdout.strip()} removed (`upstream` already exists and is kept); "
+                            f"add it back under another name with `git remote add <name> <url>` if you need it")
             else:
                 sh("git", "remote", "rename", "origin", "upstream", check=True)
                 done.append(f"upstream    {old.stdout.strip()} (where this checkout came from)")
@@ -519,6 +549,11 @@ def cmd_reset(args):
             if src.exists():
                 shutil.copytree(src, state_dir() / f"origin-{name}", dirs_exist_ok=True)
 
+    aside = state_dir() / "setup-aside"
+    if aside.exists():
+        die(f"an earlier reset stopped half-way. Its copy of your setup files is in {aside}: "
+            "copy back what you need, delete that folder, then run ./fx reset again")
+
     to_origin = "--setup" in args
     target = ORIGIN_TAG if to_origin else TAG
     snap = "origin" if to_origin else "baseline"
@@ -532,12 +567,18 @@ def cmd_reset(args):
     remote = [b.split("/", 1)[1] for b in sh("git", "branch", "-r", "--list", "origin/factory/*",
                                              "--format=%(refname:short)").stdout.split()]
     changed = [] if to_origin else setup_changes(target)
+    then = state_dir() / f"{snap}-issues"
+    known = {x.name for x in (then if then.exists() else FACTORY / "demo-issues").glob("*.md")}
+    new_issues = sorted((x.name for x in (FACTORY / "issues").glob("*.md") if x.name not in known),
+                        key=lambda n: (len(n), n))
 
     print(f"Reset this sandbox to {'the setup it was created with' if to_origin else 'its starting point'} ({short(target)}):")
     print(f"  delete {len(jobs)} job record(s): {', '.join(jobs) or 'none'}")
     print(f"  drop {commits} commit(s) from {base}, here and in origin")
     print(f"  delete {len(set(branches) | set(remote))} job branch(es)")
     print("  restore the issue files and job records to how they were then")
+    if new_issues:
+        print(f"  delete {len(new_issues)} issue file(s) written since: {', '.join(new_issues)}")
     if to_origin:
         print("  discard every setup change made since the sandbox was created")
     else:
@@ -556,35 +597,40 @@ def cmd_reset(args):
         print(f"saved {len(jobs)} job folder(s) to {dest.relative_to(REPO).as_posix()}")
 
     # Set the setup aside, as it is in the working tree now (committed or not).
-    aside = state_dir() / "setup-aside"
-    shutil.rmtree(aside, ignore_errors=True)
-    if not to_origin:
-        for rel in SETUP:
-            src = REPO / rel
-            if src.is_dir():
-                shutil.copytree(src, aside / rel)
-            elif src.exists():
-                (aside / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, aside / rel)
+    kept_setup = [] if to_origin else setup_files()
+    for rel in kept_setup:
+        (aside / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / rel, aside / rel)
 
+    left = []  # what could not be cleaned up; the reset goes on and says so at the end
     for wt in sorted((REPO / ".worktrees").iterdir()) if (REPO / ".worktrees").exists() else []:
         sh("git", "worktree", "remove", "--force", str(wt))
+        if wt.exists():
+            shutil.rmtree(wt, ignore_errors=True)
+        if wt.exists():
+            left.append(f"{wt.relative_to(REPO).as_posix()} (something still uses it; delete the folder once it is free)")
     sh("git", "worktree", "prune")
     for b in branches:
-        sh("git", "branch", "-D", b)
+        if sh("git", "branch", "-D", b).returncode != 0:
+            left.append(f"branch {b}")
     for b in remote:
-        sh("git", "push", "origin", "--delete", b)
+        if sh("git", "push", "origin", "--delete", b).returncode != 0:
+            left.append(f"branch {b} in origin")
     sh("git", "reset", "--hard", target, check=True)
 
     if not to_origin:  # put the setup back and make it part of the starting point
-        for rel in SETUP:
-            src, dst = aside / rel, REPO / rel
-            if src.is_dir():
-                shutil.rmtree(dst, ignore_errors=True)
-                shutil.copytree(src, dst)
-            elif src.exists():
-                shutil.copy2(src, dst)
-        sh("git", "add", "--", *[rel for rel in SETUP if (REPO / rel).exists()], check=True)
+        for rel in setup_files():  # a setup file that was deleted before the reset stays deleted
+            if rel not in kept_setup:
+                (REPO / rel).unlink()
+        for rel in kept_setup:
+            (REPO / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(aside / rel, REPO / rel)
+        # Stage the setup files one by one, and the ones that are gone: never a whole folder,
+        # which would sweep in whatever else lies in .claude.
+        gone = sh("git", "ls-files", "-z", "--deleted", "--", *SETUP, check=True).stdout.split("\0")
+        paths = sorted({*setup_files(), *(rel for rel in gone if rel and not rel.startswith(NOT_SETUP))})
+        for i in range(0, len(paths), 100):  # in batches: a command line has a length limit
+            sh("git", "add", "-A", "--", *paths[i:i + 100], check=True)
         if sh("git", "diff", "--cached", "--quiet").returncode != 0:
             sh("git", "commit", "-m", "Setup for the next run", check=True)
     shutil.rmtree(aside, ignore_errors=True)
@@ -601,15 +647,26 @@ def cmd_reset(args):
     if to_origin:  # the original setup is the starting point again
         snapshot("baseline")
 
+    if left:
+        print("\nCould not remove:")
+        for item in left:
+            print(f"  {item}")
     print(f"\nDone. The sandbox starts again at {short('HEAD')}:")
     job("issues")
     return 0
 
 
+def setup_files():
+    """The setup files in the working tree now: tracked ones and new ones git doesn't ignore."""
+    out = sh("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *SETUP, check=True).stdout
+    return sorted({rel for rel in out.split("\0")
+                   if rel and not rel.startswith(NOT_SETUP) and (REPO / rel).is_file()})
+
+
 def setup_changes(since):
     """Setup files that differ from the starting point, committed or not."""
     out = sh("git", "diff", "--name-only", since, "--", *SETUP).stdout.split()
-    return sorted(set(out))
+    return sorted(rel for rel in set(out) if not rel.startswith(NOT_SETUP))
 
 
 CONFIG_KEYS = {
@@ -667,12 +724,16 @@ def cmd_config(args):
         print(f"{key} is already {value}")
         return 0
     path.write_text(new, newline="\n")  # LF on Windows too, as .gitattributes wants
-    sh("git", "add", "factory/config.json", check=True)
-    sh("git", "commit", "-m", f"Set {key} to {value}", check=True)
+    # Only this file: whatever else is staged stays staged and out of the commit.
+    sh("git", "commit", "-m", f"Set {key} to {value}", "--", "factory/config.json", check=True)
     print(f"{key} is now {value} (committed as {short('HEAD')}).")
-    url = sh("git", "remote", "get-url", "origin").stdout.strip()
-    if tracker() == "files" and url and Path(url).exists():
-        base = cfg["base_branch"]
+    base = cfg["base_branch"]
+    if tracker() == "files" and local_origin():
+        branch = sh("git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if branch != base:
+            print(f"Not pushed: you are on {branch}, and jobs start from {base} in origin. "
+                  f"Merge this into {base} and push for it to apply.")
+            return 0
         pushed = sh("git", "push", "origin", f"HEAD:refs/heads/{base}")
         print("It applies to the next job." if pushed.returncode == 0
               else f"Could not push it to origin: {pushed.stderr.strip()}")

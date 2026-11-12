@@ -93,8 +93,8 @@ Job: <id>. Job folder: <repo>/factory/jobs/<id>/. Main checkout: <repo>. Worktre
 the job's cost is found by that string.
 
 Agents that open pages get ports. With `n` the job number (`004` → 4), the
-builder gets `5100 + 10n`, `reviewer-ux` `5101 + 10n` and `reviewer-ui`
-`5102 + 10n` (`ports` in `config.json`).
+builder gets `5100 + 10n`, `reviewer-ux` `5101 + 10n`, `reviewer-ui`
+`5102 + 10n` and the approver `5103 + 10n` (`ports` in `config.json`).
 
 Name the builder `builder-<id>`: pass it as the agent's name where the Agent
 tool takes one, otherwise put it in the description and keep the agent id the
@@ -155,7 +155,7 @@ the same map, prompt `<header> Review round <N>.` plus the port for `ux` and
 finished:
 
 - all PASS: `factory/bin/job advance <id> approve`, then spawn `approver` with
-  `<header> Final round: <N>.`
+  `<header> Final round: <N>.` plus its port
 - any CHANGES: `factory/bin/job advance <id> build` (or `needs-human` when it
   refuses because this was the last round), then resume the builder:
   `Round <N-1> reviews are in round-<N-1>/. Address every VERDICT: CHANGES, push, and update build.md for round <N>.`
@@ -283,9 +283,9 @@ new feature, ask.
   ```
 
   It saves `rejection.md`, posts the reason on the issue, removes the factory
-  labels, deletes the job's branch on `origin`, and moves the job to Done. The
-  issue stays open; to bring it back, delete `factory/jobs/<id>` and add the
-  `factory` label again.
+  labels, deletes the job's branch on `origin`, and moves the job to `rejected`. The
+  issue stays open. Bringing it back is the user's step, not yours: they delete
+  `factory/jobs/<id>` and add the `factory` label again.
 - **An answer to a `needs-info` question**: post their words on the issue, then
   `factory/bin/job advance <id> intake` and go to **intake**:
 

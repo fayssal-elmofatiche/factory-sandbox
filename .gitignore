@@ -5,3 +5,5 @@ __pycache__/
 /.worktrees/
 /factory/issues/
 /factory/runs/
+/.claude/worktrees/
+/.claude/settings.local.json

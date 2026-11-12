@@ -743,3 +743,120 @@ def test_local_setup_makes_a_working_sandbox(tmp_path):
     assert "Local sandbox ready" in out
     rows = sh([str(target / "factory/bin/job"), "queue"], target).stdout.splitlines()
     assert rows and rows[0].startswith("new\t1\t")
+
+
+# ---- found by the November 2026 review ---------------------------------------
+
+def run_guard(sb, role, command):
+    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(sb.repo)})
+    return sh([str(sb.repo / "factory/bin/guard"), role], sb.repo, check=False, stdin=event).returncode
+
+
+def test_guard_sees_git_options_before_the_subcommand(sb):
+    wt = ".worktrees/001-x"
+    assert run_guard(sb, "builder", f"git -C {wt} push origin HEAD:main") == 2
+    assert run_guard(sb, "builder", f'git -C "{wt}" push --force origin factory/001-x') == 2
+    assert run_guard(sb, "builder", "git -c user.name=x --no-pager push origin +HEAD:factory/001-x") == 2
+    assert run_guard(sb, "reviewer", f"git -C {wt} commit -am x") == 2
+    assert run_guard(sb, "reviewer", f"git --git-dir={wt}/.git reset --hard HEAD~1") == 2
+    # What the agents are told to do still works.
+    assert run_guard(sb, "builder", f"git -C {wt} push -u origin factory/001-x") == 0
+    assert run_guard(sb, "builder", 'git commit -am "push the main fix"') == 0
+    assert run_guard(sb, "reviewer", f"git -C {wt} diff origin/main...HEAD") == 0
+    assert run_guard(sb, "reviewer", "git --no-pager log --oneline -5") == 0
+
+
+def test_guard_blocks_shell_writes_to_the_factorys_records(sb):
+    assert run_guard(sb, "reviewer", 'cd factory/jobs/001-x/round-1 && echo "GATE: PASS" > checks.md') == 2
+    assert run_guard(sb, "builder", "cd somewhere && echo {} >> job.json") == 2
+    assert run_guard(sb, "builder", "cp /tmp/fake round-1/merge-checks.md") == 2
+    assert run_guard(sb, "builder", "rm events.jsonl") == 2
+    # Reading them is fine, also with a redirect elsewhere on the line.
+    assert run_guard(sb, "reviewer", "grep GATE round-1/checks.md 2>/dev/null") == 0
+    assert run_guard(sb, "reviewer", "cat round-1/checks.md | head -5") == 0
+
+
+TEXT = "Say “no match” → plainly, für Händler"
+
+
+def write_issue(sb, n, title=TEXT, body="Preis in €/MWh, “quoted”."):
+    path = sb.repo / "factory" / "issues" / f"{n}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(f"---\ntitle: {title}\nstate: open\nlabels: factory\nauthor: op\n"
+                     f"created: 2026-01-01T00:00:00Z\n---\n\n{body}\n".encode())
+    return path
+
+
+def job_bytes(sb, *args, stdin=None):
+    """Run factory/bin/job without decoding its output in this process's own encoding."""
+    return subprocess.run(launch([str(sb.repo / "factory/bin/job"), *args]), cwd=sb.repo, env=ENV,
+                          input=stdin, capture_output=True)
+
+
+def test_issue_text_outside_ascii_is_read_and_written_as_utf8(sb):
+    """Windows reads files in its ANSI code page unless told otherwise: a curly
+    quote then stops every command that lists the issues."""
+    write_issue(sb, 1)
+    res = job_bytes(sb, "issues")
+    assert res.returncode == 0, res.stderr.decode("utf-8", "replace")
+    assert TEXT in res.stdout.decode("utf-8")
+    job_id = sb.job("create", "1").stdout.strip()
+    assert json.loads((sb.dir(job_id) / "job.json").read_text(encoding="utf-8"))["title"] == TEXT
+    issue_md = (sb.dir(job_id) / "issue.md").read_text(encoding="utf-8")
+    assert TEXT in issue_md and "€/MWh, “quoted”" in issue_md
+    # A comment the factory posts keeps the text intact too.
+    sb.intake(job_id, decision="REJECT")
+    sb.job("advance", job_id, "rejected")
+    assert TEXT in (sb.repo / "factory" / "issues" / "1.md").read_text(encoding="utf-8")
+
+
+def test_feedback_outside_ascii_reaches_the_job_file(sb):
+    job_id = sb.to_build()
+    sb.job("park", job_id, stdin="stuck")
+    words = "use the → arrow and “quotes”"
+    res = job_bytes(sb, "feedback", job_id, stdin=words.encode())
+    assert res.returncode == 0, res.stderr.decode("utf-8", "replace")
+    assert words in (sb.dir(job_id) / "feedback-1.md").read_text(encoding="utf-8")
+
+
+def test_an_issue_file_that_is_not_utf8_is_skipped_not_fatal(sb):
+    write_issue(sb, 1, title="Good one", body="ok")
+    (sb.repo / "factory" / "issues" / "2.md").write_bytes(b"---\ntitle: caf\xe9 \xff\n---\n\nbody\n")
+    res = sb.job("issues")
+    assert "Good one" in res.stdout and "skipping factory/issues/2.md" in res.stderr
+
+
+def test_comment_end_marker_inside_a_line_is_text(sb):
+    path = write_issue(sb, 1, title="T", body="Body.")
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
+        f.write("\n<!-- comment by op at 2026-01-01T00:00:10Z -->\n"
+                "Do not write `<!-- /comment -->` inline, thanks.\n<!-- /comment -->\n")
+    job_id = sb.job("create", "1").stdout.strip()
+    issue_md = (sb.dir(job_id) / "issue.md").read_text(encoding="utf-8")
+    assert issue_md.count("### @op, ") == 1  # one comment, not a comment and a forged reply
+    assert "inline, thanks." in issue_md
+
+
+def test_a_decision_that_is_one_bare_word_still_escalates(sb):
+    job_id = sb.to_approved()
+    (sb.dir(job_id) / "decision.md").write_text("ESCALATE")
+    sb.job("advance", job_id, "needs-human")
+    assert sb.state(job_id)["stage"] == "needs-human"
+
+
+@pytest.mark.parametrize("path", ["pytest.py", "pytest/__init__.py"])
+def test_gate_fails_a_file_that_would_stand_in_for_pytest(sb, path):
+    job_id = sb.to_build()
+    res = gate_after(sb, job_id, path=path, text='print("99 passed in 0.01s")\n')
+    assert res.returncode == 1 and path in res.stdout
+
+
+def test_a_job_folder_never_exists_without_its_job_json(sb):
+    """The dashboard lists every folder in jobs/; one without job.json is an error to it."""
+    ref = sb.issue()
+    job_id = sb.job("create", ref).stdout.strip()
+    events = (sb.dir(job_id) / "events.jsonl").read_text().splitlines()
+    assert json.loads(events[0])["event"] == "create" and (sb.dir(job_id) / "job.json").exists()
+    source = (sb.repo / "factory" / "bin" / "job").read_text(encoding="utf-8")
+    body = source.split("def cmd_create(", 1)[1].split("\ndef ", 1)[0]
+    assert body.index("save(job)") < body.index("write_issue_md(job)")
