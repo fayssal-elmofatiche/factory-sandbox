@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fx: one entry point for running and showing the software factory.
 
-A thin wrapper. It starts the dashboard, opens the presentation, checks the
+A thin wrapper. It opens the presentation, starts the dashboard, checks the
 prerequisites and resets a demo sandbox. Everything about jobs still goes
 through factory/bin/job; fx adds no factory logic of its own.
 
@@ -152,7 +152,7 @@ def cmd_doctor():
     if missing:
         print(f"\n{len(missing)} thing(s) to fix before the factory can run: {', '.join(missing)}.")
         return 1
-    print("\nReady. Next: ./fx up, then ./fx run.")
+    print("\nReady. Next: ./fx deck to present, then ./fx up and ./fx run.")
     return 0
 
 
@@ -220,12 +220,8 @@ def cmd_up(args):
             die("the dashboard server stopped at once; see " + str(state_dir() / "dashboard.log"))
     dash = f"http://127.0.0.1:{st['port']}/dashboard.html"
     print(f"dashboard     {dash}")
-    if DECK.exists():
-        print(f"presentation  {DECK}")
     if "--no-open" not in args:
         open_url(dash)
-        if DECK.exists():
-            open_url(deck_url())
     print("\nNext, in this folder:  ./fx run     (opens Claude Code on /factory run)")
     print("Stop the dashboard:    ./fx down")
     return 0
@@ -247,6 +243,7 @@ def cmd_deck():
         die("docs/presentation.html is not in this checkout")
     print(DECK)
     open_url(deck_url())
+    print("\nWhen you are ready to run the factory:  ./fx up, then ./fx run")
     return 0
 
 
@@ -602,7 +599,8 @@ The factory itself runs inside a Claude Code session that you watch.
 
 EXAMPLES = """examples:
   fx doctor                  is this machine ready?
-  fx up                      dashboard and presentation
+  fx deck                    the presentation, to show the factory first
+  fx up && fx run            the dashboard, then the factory
   fx queue 2 && fx run       queue issue 2, then run the factory
   fx config review.low sonnet
   fx show 1 && fx approve 1  look at a job that waits for you, then approve it
@@ -617,11 +615,13 @@ COMMANDS = [
      "Checks Python, git, pytest, ruff, the Claude Code version, the tracker's tool, the\n"
      "optional browser tools and whether factory/checks.sh passes. Exits 1 if something\n"
      "the factory needs is missing, and says what."),
-    ("up", "start the dashboard, open it and the presentation",
-     "Starts the dashboard on a free port bound to 127.0.0.1 and opens it and\n"
-     "docs/presentation.html in the browser. Running it again reuses the same server."),
+    ("up", "start the dashboard and open it",
+     "Starts the dashboard on a free port bound to 127.0.0.1 and opens it in the\n"
+     "browser. Running it again reuses the same server. `fx deck` opens the presentation."),
     ("down", "stop the dashboard", None),
-    ("deck", "open the presentation", None),
+    ("deck", "open the presentation",
+     "Opens docs/presentation.html in the browser. Show it before you start the\n"
+     "dashboard with `fx up` and the factory with `fx run`."),
     ("run", "open Claude Code on /factory run",
      "Opens Claude Code in this folder and types `/factory run`, or `/factory run <issue>`\n"
      "for one issue. From there the session is yours to watch and approve."),

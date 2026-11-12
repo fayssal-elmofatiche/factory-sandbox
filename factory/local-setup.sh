@@ -109,6 +109,7 @@ $(factory/bin/job issues | sed 's/^/  /')
 Next:
   cd $TARGET
   ./fx doctor   # check this machine can run the factory
-  ./fx up       # dashboard and presentation
+  ./fx deck     # the presentation
+  ./fx up       # the dashboard
   ./fx run      # Claude Code on /factory run
 MSG
