@@ -535,7 +535,7 @@ def test_reset_keeps_a_new_setup_file_and_keeps_a_deleted_one_deleted(sandbox):
 def test_reset_says_which_new_issue_files_it_deletes(sandbox):
     run([str(sandbox / "factory" / "bin" / "job"), "new-issue", "Mine"], cwd=sandbox, stdin="body")
     out = fx(sandbox, "reset", check=False, stdin="no\n").stdout
-    assert "delete 1 issue file(s) written since: 7.md" in out
+    assert "delete 1 issue file(s) written since: 8.md" in out
 
 
 def test_reset_refuses_while_an_earlier_resets_copy_is_still_there(sandbox):
