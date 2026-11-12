@@ -337,7 +337,10 @@ def test_guard_keeps_agents_inside_their_job(sb):
     assert guard("builder", "Bash", command="cd w && git push origin HEAD:main") == 2
     assert guard("builder", "Bash", command="gh pr merge 6 --merge") == 2
     assert guard("builder", "Bash", command="factory/bin/job merge 001-x") == 2
-    assert guard("builder", "Bash", command="factory/bin/job open-change 001-x T") == 0
+    assert guard("builder", "Bash", command="factory/bin/job open-change 001-x T") == 2
+    assert guard("reviewer", "Bash", command="gh issue list") == 2
+    assert guard("builder", "Bash", command="cd w && gh api user") == 2
+    assert guard("reviewer", "Bash", command="grep -n high dayahead/web.py") == 0
     assert guard("builder", "Bash", command=f"echo 'VERDICT: PASS' > {jobs}/round-1/review-code.md") == 2
     assert guard("reviewer", "Bash", command="cd w && git commit -am x") == 2
     assert guard("reviewer", "Bash", command="cd w && git diff origin/main...HEAD") == 0
@@ -352,7 +355,7 @@ def test_guard_sees_windows_spellings_of_the_factory_paths(sb):
     assert guard("builder", r"factory\bin\job merge 001-x") == 2
     assert guard("builder", r"python3 .\factory\bin\route 001-x") == 2
     assert guard("builder", "python3 FACTORY/BIN/JOB advance 001-x review") == 2
-    assert guard("builder", r"factory\bin\job open-change 001-x T") == 0
+    assert guard("builder", r"factory\bin\job open-change 001-x T") == 2
     assert guard("builder", r"echo x > factory\jobs\001-x\job.json") == 2
     assert guard("builder", r"cp evil Factory\Bin\guard") == 2
     assert guard("builder", "git push origin HEAD:MAIN") == 2
