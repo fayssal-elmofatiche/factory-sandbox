@@ -1,14 +1,10 @@
-# Local mode: the factory without GitHub
+# Setup: the factory on your machine
 
-By default the factory uses GitHub for three things: issues, pull requests and
-the `origin` remote. Local mode replaces all three, so a run touches nothing
-outside your machine and needs no account anywhere except Claude.
-
-| GitHub piece  | Local replacement                                          |
-| ------------- | ---------------------------------------------------------- |
-| Issues        | Markdown files in `factory/issues/`, or kata               |
-| Pull requests | None. The factory merges the job's branch with git         |
-| `origin`      | A bare repository on disk, next to the checkout            |
+The factory runs entirely on your machine. Issues are Markdown files in
+`factory/issues/` (or live in kata), `origin` is a repository on disk next to
+the checkout, and the factory merges a job's branch there itself. A run
+touches nothing outside your machine and needs no account anywhere except
+Claude.
 
 ## Quick start
 
@@ -25,13 +21,13 @@ either natively (see [Windows without WSL](#windows-without-wsl)) or in WSL. You
 ```bash
 git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
 cd factory-sandbox
-factory/local-setup.sh ~/factory-demo
-cd ~/factory-demo
-./fx doctor     # check this machine can run the factory
-./fx deck       # open the presentation, to show what the factory does
-./fx up         # start the dashboard and open it
-./fx run        # open Claude Code on /factory run
+./fx doctor   # check this machine
+./fx deck     # the presentation
+./fx up       # the dashboard
+./fx run      # sets the checkout up the first time, then Claude Code on /factory run
 ```
+
+On Windows PowerShell, use `.\fx.cmd` instead of `./fx`.
 
 `./fx up` starts the dashboard on a free port bound to `127.0.0.1` and prints
 its address. `./fx run` opens Claude Code and types `/factory run`; you watch
@@ -39,10 +35,22 @@ and approve from there. After a rehearsal, `./fx reset` discards the work and
 puts the issues back, and keeps any change you made to the setup. `./fx reset
 --setup` goes all the way back to how the sandbox was made.
 
-The setup script creates two folders: `~/factory-demo`, the working checkout,
-and `~/factory-demo.git`, the bare repository that plays `origin`. It adds
-three demo issues. The first is labeled `factory`, so the first run has work
-to do.
+## What `./fx setup` does
+
+Your clone is the sandbox. The first `./fx run` sets it up; `./fx setup` does
+the same by hand, and `./fx doctor` only says whether it has happened. Run it
+on `main`. It:
+
+- creates `<checkout>.git`, a bare repository next to the checkout, pushes
+  `main` to it and makes it `origin`. The factory pushes job branches there and
+  merges into its `main`.
+- renames the remote you cloned from to `upstream`. The factory never uses it;
+  `git pull upstream main` brings in course updates.
+- copies the demo issues from `factory/demo-issues/` into `factory/issues/`.
+  The first is labeled `factory`, so the first run has work to do.
+- records the starting point that `./fx reset` returns to.
+
+Running it again changes nothing.
 
 ### Windows with WSL
 
@@ -62,8 +70,7 @@ browser at the same `localhost` address.
 ### Windows without WSL
 
 The factory also runs on Windows itself. Claude Code runs its shell commands in
-Git Bash there, and the factory does the same for `checks.sh` and the setup
-script. You need:
+Git Bash there, and the factory does the same for `checks.sh`. You need:
 
 - [Git for Windows](https://git-scm.com/download/win), which brings Git Bash
 - Python 3.10 or later that answers to `python3` in Git Bash. The `python3`
@@ -83,10 +90,9 @@ uv pip install --python 3.14 --system --break-system-packages pytest
 winget install --id Anthropic.ClaudeCode
 ```
 
-Open a new terminal, sign in with `claude`, then run the quick start in **Git
-Bash**: `factory/local-setup.sh` is a bash script. After that `./fx` works in
-Git Bash and `.\fx.cmd` works in PowerShell and cmd, with the same commands. `./fx doctor` checks that Git Bash finds a real
-`python3`.
+Open a new terminal, sign in with `claude`, then run the quick start. In
+PowerShell and cmd use `.\fx.cmd`; in Git Bash `./fx` works, with the same
+commands. `./fx doctor` checks that Git Bash finds a real `python3`.
 
 What is different from Linux:
 
@@ -134,10 +140,10 @@ TXT
 `factory/issues/` is gitignored, like `factory/jobs/`: both are state on your
 machine, not part of the project.
 
-## What changes in the pipeline
+## How a job merges
 
 - **Intake** posts its verdict as a comment on the issue.
-- **The builder** pushes its branch to the local `origin` and opens nothing.
+- **The builder** commits and pushes its `factory/<job-id>` branch to `origin`.
 - **APPROVE** makes `factory/bin/job merge` sync the branch with the base, run
   the gate again, merge the branch into the base and push. The push is the
   atomic step: git refuses it if the base moved after the sync, and the factory
@@ -153,39 +159,44 @@ machine, not part of the project.
   For anything else (a squash, a rebase, a branch that never passed the
   gate), git can't trace the result back to a gated commit: tell the factory
   with `factory/bin/job mark-merged <job> <sha>`.
-- `merge_method` still applies: `merge` makes a merge commit, `squash` a single
+- `merge_method` applies: `merge` makes a merge commit, `squash` a single
   commit, and `rebase` fast-forwards the base to the synced branch (which may
   itself contain a merge of the base; no commits are rewritten).
 - If the base moves while a job merges, the factory syncs and gates again, up
   to three times. A merge that still fails waits in `needs-human`;
   `factory/bin/job merge <job>` retries it without a new round.
 - Your own checkout is never touched: run `git pull` in it to see what merged.
-- The first `./fx run` in a new sandbox shows Claude Code's trust prompt.
+- The first `./fx run` in a new checkout shows Claude Code's trust prompt.
   Accept it: until then Claude Code skips the hooks that keep each agent
   inside its job. `./fx doctor` shows whether the folder is trusted.
 
-Everything else is unchanged: the stages, the gate, risk routing, the review
-rounds and the files in `factory/jobs/`. The dashboard works as before; job
-cards show no PR link.
+The review record is `factory/jobs/<job-id>/` and the dashboard, and the diff
+is `git diff main...factory/<job-id>`.
 
-## What you give up
+## Another copy: `local-setup.sh`
 
-A pull request page where a person reads and comments on the change. In local
-mode the review record is `factory/jobs/<job-id>/` and the dashboard, and the
-diff is `git diff main...factory/<job-id>`.
+You don't need it to run the factory. For a second, separate sandbox, for
+example to rehearse without touching your own:
+
+```bash
+factory/local-setup.sh ~/factory-demo
+```
+
+It clones this checkout's current commit into `~/factory-demo` as `main` and
+runs `./fx setup` there, so `~/factory-demo.git` plays its `origin`. It is a
+bash script: on Windows run it in Git Bash.
 
 ## The trackers
 
-`tracker` in `factory/config.json` picks one. `local-setup.sh` sets it for you.
+`tracker` in `factory/config.json` picks one.
 
-| `tracker`          | Issues live in             | Needs            |
-| ------------------ | -------------------------- | ---------------- |
-| `github` (default) | GitHub, with pull requests | `gh`, signed in  |
-| `files`            | `factory/issues/*.md`      | nothing extra    |
-| `kata`             | a kata project             | `kata` on `PATH` |
+| `tracker`         | Issues live in        | Needs            |
+| ----------------- | --------------------- | ---------------- |
+| `files` (default) | `factory/issues/*.md` | nothing extra    |
+| `kata`            | a kata project        | `kata` on `PATH` |
 
 For kata, a local issue tracker built for agents
-(`go install go.kenn.io/kata/cmd/kata@latest`):
+(`go install go.kenn.io/kata/cmd/kata@latest`), make a copy with:
 
 ```bash
 factory/local-setup.sh ~/factory-demo --tracker kata
@@ -193,20 +204,14 @@ factory/local-setup.sh ~/factory-demo --tracker kata
 
 Kata refs are short ids such as `2f2b`. Browse the issues with `kata tui`.
 
-## Adding a tracker or a host
+## Adding a tracker
 
-`factory/bin/job` reaches the outside world through two sets of small classes,
-and nothing else in the factory names a tool:
+`factory/bin/job` reaches issues through one set of small classes, and nothing
+else in the factory names a tool. A **tracker** holds issues: `whoami`, `get`,
+`queued`, `rows`, `comment`, `label`, `close`, `create`,
+`edited_after_label`. See `FilesTracker` and `KataTracker`. Write a class with
+the same methods, add it to `TRACKERS` and set `"tracker"` to its name. Code
+has one host, `LocalHost`: it merges into `origin` on disk.
 
-- A **tracker** holds issues: `whoami`, `get`, `queued`, `rows`, `comment`,
-  `label`, `close`, `create`, `edited_after_label`. See `GitHubTracker`,
-  `FilesTracker` and `KataTracker`.
-- A **host** merges code: `find_change`, `open_change`, `landed`, `comment`,
-  `close`, `merge`, `where`. See `GitHubHost` and `LocalHost`.
-
-For GitLab, write `GitLabTracker` and `GitLabHost` on top of `glab` or the REST
-API (issues are addressed by `iid`, "Closes #n" works in a merge request, and
-`merge` returns `"waiting"` when a pipeline has to pass first), add them to
-`TRACKERS` and `HOSTS`, and set `"tracker": "gitlab", "host": "gitlab"`. The
-tests in `factory/tests/` run against the files tracker and the local host;
-copy the ones that matter for a new pair.
+The tests in `factory/tests/` run against the files tracker and the local
+host; copy the ones that matter for a new tracker.

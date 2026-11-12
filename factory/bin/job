@@ -26,7 +26,7 @@ Usage:
   job mark-merged <job> <sha>    local host: record a merge a person made by hand (squash, rebase)
   job agents <job> <json>        record the routed agent set (called by factory/bin/route)
   job sync <job>                 refresh reviews, gate and cost from the job's files
-  job summary [<job>...]         table of jobs: issue, stage, PR, cost, time
+  job summary [<job>...]         table of jobs: issue, stage, round, cost, time
   job answer <job>               post the author's answer (stdin) on the job's issue
   job new-issue <title>          file a new `factory` issue with the body on stdin; prints its ref
   job issues                     list every issue: ref, state, labels, title

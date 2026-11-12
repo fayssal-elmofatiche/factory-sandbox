@@ -405,15 +405,14 @@ function elapsed(job) {
   return min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m` : `${min}m`
 }
 
-// The example jobs keep their issue and PR numbers but have no URLs.
+// The example jobs keep their issue numbers but have no URLs.
 const link = (url, text) =>
   url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>` : `<span>${text}</span>`
 
 function links(job) {
   const out = [link(job.issue_url, `issue #${job.issue}`)]
-  if (job.pr) out.push(link(job.pr_url, `PR #${job.pr}`))
-  // On the local host there is no PR: show the commit that landed on the base.
-  else if (job.merged_sha) out.push(`<span title="merged at ${esc(job.merged_sha)}">merged ${esc(job.merged_sha.slice(0, 7))}</span>`)
+  // Show the commit that landed on the base.
+  if (job.merged_sha) out.push(`<span title="merged at ${esc(job.merged_sha)}">merged ${esc(job.merged_sha.slice(0, 7))}</span>`)
   return out.join('')
 }
 
