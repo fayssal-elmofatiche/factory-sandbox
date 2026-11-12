@@ -153,8 +153,9 @@ machine, not part of the project.
 
 - **Intake** posts its verdict as a comment on the issue.
 - **The builder** commits and pushes its `factory/<job-id>` branch to `origin`.
-- **APPROVE** makes `factory/bin/job merge` sync the branch with the base, run
-  the gate again, merge the branch into the base and push. The push is the
+- **APPROVE** makes `factory/bin/job merge` sync the branch with the base,
+  commit the job's acceptance tests to `acceptance/`, run the gate again, merge
+  the branch into the base and push. The push is the
   atomic step: git refuses it if the base moved after the sync, and the factory
   then syncs and gates again. The issue is then closed, with the merge commit noted
   on it.

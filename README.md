@@ -56,12 +56,12 @@ intake → route → spec → build → gate → review → approve → merge
 | ------- | -------------------------- | ------------------------------------------------------- |
 | intake  | agent                      | accept, reject or ask for more, posted on the issue     |
 | route   | `factory/bin/route` script | which reviewers run, picked from the risk rating        |
-| spec    | agent                      | a spec with numbered acceptance criteria                |
+| spec    | agent                      | a spec with numbered acceptance criteria, and black-box tests of them |
 | build   | agent                      | commits on a branch in its own git worktree             |
-| gate    | `factory/bin/gate` script  | the result of `factory/checks.sh` and a protected-paths check |
+| gate    | `factory/bin/gate` script  | the result of `factory/checks.sh`, the job's acceptance tests and a protected-paths check |
 | review  | routed agents              | code, security, UX and UI reviews, as risk and the diff demand |
 | approve | agent                      | approve, or hand the decision to a person               |
-| merge   | `factory/bin/job` script   | sync with `main`, gate again, merge, close the issue    |
+| merge   | `factory/bin/job` script   | sync with `main`, keep the acceptance tests, gate again, merge, close the issue |
 
 Three kinds of actor are involved:
 
@@ -88,6 +88,10 @@ The design choices that carry the weight:
   checkout and fails a branch that touches the factory's own files or the
   configuration the checks read (`pyproject.toml`, any `conftest.py`). The
   checks fail on skipped tests and on a branch with fewer tests than the base.
+- **Someone else writes the tests that judge the build.** The spec writer
+  turns the acceptance criteria into black-box tests before any code exists;
+  the builder can't edit them, and the gate runs them. See
+  [Acceptance tests](#acceptance-tests).
 - **Risk and the diff decide the review.** A low-risk change gets one code
   reviewer on the smallest model; a high-risk one always gets a security
   reviewer. After the build, the files the branch changed can add reviewers
@@ -119,6 +123,35 @@ has a recipe. This is a demo
 and a design to learn from, not something to point at a production repository
 as it is.
 
+## Acceptance tests
+
+The builder writes its own tests next to its code, so on their own they only
+show that the code does what the builder thought. The spec writer, a different
+agent working before any code exists, therefore writes a second file next to
+`spec.md`: `acceptance.py`, pytest tests of the spec's numbered acceptance
+criteria (`test_ac<N>_...`), using only the public surface the spec names, the
+page or the public functions.
+
+- `factory/bin/job advance <job> build` refuses a spec without an
+  `acceptance.py` that compiles and has test functions. It seals the file with
+  the spec and runs it once on the base, into `acceptance-base.md`; tests that
+  already pass there only draw a warning.
+- The builder can read the tests but not edit them (the guard), and the gate
+  refuses to run when the file differs from the sealed copy. The gate runs them
+  after `checks.sh`, from the main checkout, with an empty pytest configuration;
+  `checks.md` has an `## Acceptance tests` section. Skipped tests fail, as in
+  `checks.sh`. The builder's Stop hook runs them too.
+- At merge, `factory/bin/job merge` commits them as
+  `acceptance/test_<job_id>.py`. `checks.sh` runs that folder with the rest of
+  the suite, and `acceptance/` is a guarded path, so every later job has to
+  keep them passing and none may change them.
+- When a test contradicts the spec or can't be met, the builder writes
+  `STATUS: BLOCKED` and names it. A person then sends the job back to the
+  spec writer with `./fx feedback <job> --spec`, which keeps the old files as
+  `spec-<k>.md` and `acceptance-<k>.py`.
+
+`"acceptance": false` in `factory/config.json` turns all of this off.
+
 ## The `fx` command
 
 `./fx` is one entry point for running and showing the factory. It wraps the
@@ -144,7 +177,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
 | `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
-| `./fx feedback <job>` | Sends it back to work with your instructions |
+| `./fx feedback <job>` | Sends it back to work with your instructions; `--spec` sends it back to the spec writer |
 | `./fx reject <job>` | Drops it, with your reason |
 | `./fx retry <job>` | Tries a failed merge again |
 | `./fx park <job>` | Stops a running job that is stuck |
@@ -208,6 +241,7 @@ shows why, and the commands for your options with a copy button each.
 ./fx show <job>         # the decision, the change and your options
 ./fx approve <job>      # approve it: the factory runs the checks again and merges
 ./fx feedback <job>     # send it back to work; you write what should change
+./fx feedback <job> --spec   # the spec or its acceptance tests are wrong: back to the spec writer
 ./fx reject <job>       # drop it; you write the reason
 ./fx retry <job>        # try a failed merge again
 ```
@@ -299,6 +333,9 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   until a person queues it. Scheduling sweeps is not built yet.
 - An issue file can name the issues it waits for (`blocked_by: 3, 4`);
   `job queue` holds it, without a slot, until they are closed.
+- Acceptance tests (November 2026): the spec writer writes black-box tests of
+  the acceptance criteria, the gate runs them, and merged jobs keep them in
+  `acceptance/`.
 - `fx` wraps the common commands, and `./fx setup` makes a clone its own
   sandbox; `factory/local-setup.sh` makes an extra copy.
 - Windows (November 2026): the factory runs natively on Windows as well as on

@@ -25,11 +25,11 @@ tell the user; never work around it.
 intake (fable)     → ACCEPT (scope possibly changed) | NEEDS-INFO | REJECT, posted as an issue comment
 route (script)     → reviewers + models from risk/surfaces via config.json
 worktree           → factory/<job-id> from origin/<base>
-spec-writer (opus) → spec.md
+spec-writer (opus) → spec.md + acceptance.py (black-box tests, run once on the base)
 builder (opus)     → commits and pushes factory/<job-id> to origin
-gate (script)      → checks.sh; FAIL → builder gets the log, no reviewers spawned
+gate (script)      → checks.sh + acceptance.py; FAIL → builder gets the log, no reviewers spawned
 reviewers (routed) → parallel, WAIT FOR ALL; CHANGES → builder → gate → reviewers
-approver (opus)    → APPROVE: sync origin/<base>, gate, merge into <base>, close the issue
+approver (opus)    → APPROVE: sync origin/<base>, add acceptance.py to acceptance/, gate, merge, close the issue
                      ESCALATE: decision as issue comment, label factory:needs-human
 ```
 
@@ -62,11 +62,15 @@ through the scripts. `factory/jobs/` is gitignored runtime state.
 <repo>/factory/jobs/<job-id>/issue.md          the issue, quoted as data
 <repo>/factory/jobs/<job-id>/intake.md         intake's decision, scope, risk, surfaces
 <repo>/factory/jobs/<job-id>/spec.md
+<repo>/factory/jobs/<job-id>/acceptance.py              the spec writer's black-box tests; sealed with spec.md
+<repo>/factory/jobs/<job-id>/acceptance-base.md         how they did on the base, before any code
 <repo>/factory/jobs/<job-id>/build.md
-<repo>/factory/jobs/<job-id>/round-<N>/checks.md        the gate's verdict for round N
+<repo>/factory/jobs/<job-id>/round-<N>/checks.md        the gate's verdict for round N (checks.sh and acceptance tests)
 <repo>/factory/jobs/<job-id>/round-<N>/review-<r>.md    one per routed reviewer
 <repo>/factory/jobs/<job-id>/decision.md                APPROVE or ESCALATE; earlier ones are kept as decision-<k>.md
 <repo>/factory/jobs/<job-id>/feedback-<k>.md            the user's feedback on an escalated or parked job
+<repo>/factory/jobs/<job-id>/spec-<k>.md, acceptance-<k>.py   earlier specs, kept when a job goes back to spec
+<repo>/acceptance/test_<job_id>.py             a merged job's acceptance tests, added at merge; guarded
 <repo>/factory/jobs/<job-id>/events.jsonl               every transition, in order, with its commit
 <repo>/.worktrees/<job-id>/                    the job's worktree, on factory/<job-id>
 ```
@@ -124,7 +128,10 @@ decision:
 - `REJECT`: `factory/bin/job advance <id> rejected`.
 
 **spec.** Spawn `spec-writer` with `<header>`. When it returns,
-`factory/bin/job advance <id> build` and go to **build**.
+`factory/bin/job advance <id> build` and go to **build**. It refuses without
+an `acceptance.py` that compiles and has test functions: resume the
+spec-writer once with the refusal. It runs the tests on the base and warns
+when every one already passes there; that is a note, not a stop.
 
 **build.** Spawn or resume `builder-<id>` with
 `<header> Build round <N>. Port: <port>.` plus what this round is for: in
@@ -304,6 +311,11 @@ new feature, ask.
   and continue like any job. A job that was parked during `intake` or `spec`
   goes back to that stage instead: respawn that agent and add
   `Read feedback-<k>.md first.` to its prompt.
+- **The spec or its acceptance tests are wrong** (the builder is BLOCKED on a
+  test, or they say so): `factory/bin/job feedback <n> --spec`, their words on
+  stdin as above. It keeps the old files as `spec-<k>.md` and
+  `acceptance-<k>.py` and moves the job to `spec` with a fresh round budget:
+  respawn `spec-writer` with `Read feedback-<k>.md first.`
 - **Approving a `needs-human` job** ("approve it", "merge it", "looks fine"):
   `factory/bin/job approve <id>`. It takes only a job whose tip is the commit
   the gate passed, records who approved, syncs with the base, runs the gate
