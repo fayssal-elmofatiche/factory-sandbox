@@ -200,7 +200,7 @@ merges.
 The factory's own scripts have tests: `python3 -m pytest factory/tests -q`.
 Run them, and `bash factory/checks.sh`, before merging a change to the factory itself.
 
-`./fx setup` adds three demo issues, one of them queued, and records the
+`./fx setup` adds six demo issues, one of them queued, and records the
 starting point so `./fx reset` can return to it after a rehearsal. For a
 second, separate copy, `factory/local-setup.sh <dir>` clones this checkout and
 sets the copy up. See [docs/local-mode.md](docs/local-mode.md).
@@ -216,10 +216,17 @@ usage. `OrderBook.merit_order_rank`
 in **dayahead** is the same kind of change, carried over by hand; a factory run
 on **dayahead** is still to do.
 
-The demo issues in `factory/demo-issues/` exercise the remaining paths: an
-interface change that brings in UX and UI reviewers, an export of
-per-participant order data that should be handed to a person, and an
-out-of-scope request that intake should reject.
+The demo issues in `factory/demo-issues/` take the factory down every path.
+Queue one with `./fx queue <n>`; only issue 1 is queued at the start.
+
+| # | Request | What should happen |
+|---|---------|--------------------|
+| 1 | Chart the day's hourly prices, with base and peak lines | Merges after UX, UI and security review |
+| 2 | A merit-order page per hour: supply and demand step chart, marginal order | Merges after a larger build, possibly in more than one round |
+| 3 | A form to place and withdraw bids and offers | Escalates: a new endpoint that changes orders, with no sign-in |
+| 4 | A CSV of accepted orders, with pro-rata fills at the clearing price | Escalates: an export of per-participant data |
+| 5 | Block orders across several hours | Intake asks first: how blocks clear is a market-design decision |
+| 6 | A Telegram bot for crypto prices | Intake rejects it as out of scope |
 
 ## The app: dayahead
 

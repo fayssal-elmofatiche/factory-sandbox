@@ -294,7 +294,8 @@ def test_setup_makes_the_clone_its_own_sandbox(tmp_path):
     bare = run(["git", "-C", str(origin), "rev-parse", "--is-bare-repository"], cwd=tmp_path).stdout
     assert bare.strip() == "true"
     assert run(["git", "remote", "get-url", "upstream"], cwd=clone).stdout.strip() == came_from
-    assert sorted(x.name for x in (clone / "factory" / "issues").glob("*.md")) == ["1.md", "2.md", "3.md"]
+    issues = sorted(x.name for x in (clone / "factory" / "issues").glob("*.md"))
+    assert issues == [f"{n}.md" for n in range(1, 7)]
     assert "new\t1\t" in fx(clone, "status").stdout
     assert "Already set up" in fx(clone, "setup").stdout  # a second run changes nothing
     assert "Starting point" in fx(clone, "baseline").stdout  # fx reset and baseline accept it
