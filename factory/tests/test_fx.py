@@ -99,7 +99,7 @@ def merge_a_job(box, issue="1"):
 
 # ---- help and errors -------------------------------------------------------
 
-COMMANDS = ["doctor", "up", "down", "deck", "run", "issues", "queue", "unqueue",
+COMMANDS = ["doctor", "up", "down", "deck", "run", "sweep", "issues", "queue", "unqueue",
             "status", "watch", "retro", "config", "baseline", "reset"]
 
 

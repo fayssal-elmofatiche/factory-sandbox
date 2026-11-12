@@ -1011,3 +1011,89 @@ def test_retro_counts_labels_across_jobs_and_proposes_a_fix_past_the_threshold(s
 def test_retro_with_no_jobs_says_so(sb):
     out = retro(sb).stdout
     assert "No failures" in out
+
+
+# ---- sweeps: findings a person decides on ------------------------------------
+
+
+def finding(title, file="dayahead/web.py:10", evidence="It does a thing slowly.", scope="Do it once."):
+    return {"title": title, "file": file, "evidence": evidence, "scope": scope}
+
+
+def propose(sb, kind, findings, check=True):
+    """The sweeper agent, stubbed: its findings file, handed to `job propose`."""
+    return sb.job("propose", kind, stdin=json.dumps(findings), check=check)
+
+
+def labels_of(sb, ref):
+    return [r.split("\t")[2] for r in sb.job("issues").stdout.splitlines() if r.split("\t")[0] == ref][0]
+
+
+def test_new_issue_still_queues_and_no_queue_does_not(sb):
+    queued = sb.issue(title="Queued thing")
+    waiting = sb.job("new-issue", "--no-queue", "Waiting thing", stdin="Body.").stdout.strip()
+    assert labels_of(sb, queued) == "factory"
+    assert labels_of(sb, waiting) == "-"
+    rows = sb.job("queue").stdout
+    assert f"\t{queued}\t" in rows and f"\t{waiting}\t" not in rows
+
+
+def test_a_sweep_files_unlabelled_issues_that_run_only_once_queued(sb):
+    out = propose(sb, "perf", [finding("Cache the merit order per hour")]).stdout
+    ref = out.splitlines()[0].split("\t")[1]
+    assert out.startswith(f"filed\t{ref}\tCache the merit order per hour")
+    assert labels_of(sb, ref) == "-"
+    body = (sb.repo / "factory" / "issues" / f"{ref}.md").read_text()
+    assert "`perf` sweep" in body and "dayahead/web.py:10" in body
+    assert "## Evidence" in body and "## Suggested scope" in body
+    assert f"\t{ref}\t" not in sb.job("queue").stdout
+    res = sb.job("create", ref, check=False)
+    assert res.returncode == 1
+    sb.job("label", ref, "factory")
+    assert sb.job("queue").stdout.startswith(f"new\t{ref}\t")
+    sb.job("create", ref)
+
+
+def test_a_sweep_files_no_more_than_the_cap(sb):
+    config = sb.repo / "factory" / "config.json"
+    config.write_text(json.dumps({**json.loads(config.read_text()), "sweep": {"max_issues": 2}}))
+    out = propose(sb, "cleanup", [finding(f"Remove dead helper {n}") for n in range(5)]).stdout
+    assert [r.split("\t")[0] for r in out.splitlines()[:5]] == ["filed", "filed", "skip", "skip", "skip"]
+    assert "over the cap of 2" in out
+    assert len(sb.job("issues").stdout.splitlines()) == 2
+
+
+def test_a_sweep_skips_findings_that_match_an_open_issue(sb):
+    open_ref = sb.issue(title="Escape the zone name on the prices page")
+    out = propose(sb, "security", [finding("escape the zone name on the prices page."),
+                                   finding("Bind the dev server to localhost only"),
+                                   finding("Bind the dev server to localhost only")]).stdout.splitlines()
+    assert out[0] == f"skip\tduplicate of {open_ref}\tescape the zone name on the prices page."
+    assert out[1].startswith("filed\t")
+    assert out[2].startswith(f"skip\tduplicate of {out[1].split(chr(9))[1]}\t")
+    # Run again: everything it found is open now, so nothing new is filed.
+    again = propose(sb, "security", [finding("Bind the dev server to localhost only")]).stdout
+    assert again.startswith("skip\tduplicate of") and "0 filed" in again
+    assert len(sb.job("issues").stdout.splitlines()) == 2
+
+
+def test_a_sweep_refuses_bad_findings_and_files_nothing(sb):
+    assert propose(sb, "speed", [finding("A thing")], check=False).returncode == 1
+    assert sb.job("propose", "docs", stdin="not json", check=False).returncode == 1
+    res = propose(sb, "docs", [finding("A thing"), {"title": "No evidence"}], check=False)
+    assert res.returncode == 1 and "finding 2" in res.stderr
+    assert sb.job("issues").stdout == ""
+
+
+def test_guard_lets_the_sweeper_write_only_its_findings(sb):
+    def guard(tool, **tool_input):
+        event = json.dumps({"tool_name": tool, "tool_input": tool_input, "cwd": str(sb.repo)})
+        guard_script = str(sb.repo / "factory/bin/guard")
+        return sh([guard_script, "sweeper"], sb.repo, check=False, stdin=event).returncode
+    sweeps = sb.repo / "factory" / "sweeps"
+    assert guard("Write", file_path=str(sweeps / "perf.json")) == 0
+    assert guard("Write", file_path=str(sweeps / "other.json")) == 2
+    assert guard("Write", file_path=str(sb.repo / "factory" / "issues" / "9.md")) == 2
+    assert guard("Edit", file_path=str(sb.repo / "dayahead" / "web.py")) == 2
+    assert guard("Bash", command="factory/bin/job label 3 factory") == 2
+    assert guard("Bash", command="factory/bin/job propose perf < factory/sweeps/perf.json") == 2
