@@ -7,7 +7,8 @@ Usage (from an agent's frontmatter): guard <role>
 Reads the hook event on stdin and exits 2, with the reason on stderr, when the
 call is outside what the role may do:
 
-  Write, Edit   only the role's own file in factory/jobs/<job>/, plus, for the
+  Write, Edit   only the role's own file in factory/jobs/<job>/ (two for the
+                spec writer: spec.md and acceptance.py), plus, for the
                 builder, files inside .worktrees/. The sweeper writes only its findings,
                 factory/sweeps/<kind>.json: `job propose` files them
   Bash          no factory/bin/job or route (the orchestrator moves state),
@@ -36,7 +37,7 @@ BASE = json.loads((REPO / "factory" / "config.json").read_text())["base_branch"]
 
 OWN_FILE = {
     "intake": r"factory/jobs/[^/]+/intake\.md",
-    "spec-writer": r"factory/jobs/[^/]+/spec\.md",
+    "spec-writer": r"factory/jobs/[^/]+/(spec\.md|acceptance\.py)",
     "builder": r"factory/jobs/[^/]+/build\.md",
     "reviewer": r"factory/jobs/[^/]+/round-\d+/review-[a-z]+\.md",
     "approver": r"factory/jobs/[^/]+/decision\.md",

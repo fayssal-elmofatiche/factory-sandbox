@@ -26,6 +26,13 @@ SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
+# The spec writer's acceptance tests, by hand. PASSING passes on the base already;
+# NEEDS_THING passes only once a commit adds THING to dayahead/seed.py.
+PASSING = ('def test_ac1_the_package_imports():\n    """AC1: the package imports."""\n'
+           '    import dayahead\n\n    assert dayahead\n')
+NEEDS_THING = ('def test_ac1_seed_has_a_thing():\n    """AC1: dayahead.seed has a THING."""\n'
+               '    from dayahead import seed\n\n    assert seed.THING == 1\n')
+
 
 def launch(cmd):
     """The command line for one of the factory's scripts. Unix runs them by their
@@ -127,14 +134,22 @@ class Sandbox:
     def decide(self, job_id, word="APPROVE"):
         (self.dir(job_id) / "decision.md").write_text(f"{word}\n\n## Summary\n- ok\n")
 
+    def spec(self, job_id, acceptance=None):
+        (self.dir(job_id) / "spec.md").write_text("# spec\n")
+        (self.dir(job_id) / "acceptance.py").write_text(acceptance or PASSING)
+
     # -- shortcuts -----------------------------------------------------------
-    def to_build(self, risk="low", surfaces="none", **issue):
+    def to_spec(self, risk="low", surfaces="none", **issue):
         ref = self.issue(**issue)
         job_id = self.job("create", ref).stdout.strip()
         self.intake(job_id, risk=risk, surfaces=surfaces)
         self.route(job_id)
         self.job("advance", job_id, "spec")
-        (self.dir(job_id) / "spec.md").write_text("# spec\n")
+        return job_id
+
+    def to_build(self, acceptance=None, risk="low", surfaces="none", **issue):
+        job_id = self.to_spec(risk=risk, surfaces=surfaces, **issue)
+        self.spec(job_id, acceptance)
         self.job("advance", job_id, "build")
         return job_id
 
@@ -1110,3 +1125,166 @@ def test_guard_lets_the_sweeper_write_only_its_findings(sb):
     assert guard("Edit", file_path=str(sb.repo / "dayahead" / "web.py")) == 2
     assert guard("Bash", command="factory/bin/job label 3 factory") == 2
     assert guard("Bash", command="factory/bin/job propose perf < factory/sweeps/perf.json") == 2
+
+# ---- acceptance tests: written with the spec, run by the gate, kept at merge ------
+
+
+@pytest.mark.parametrize("text, why", [
+    (None, "acceptance.py doesn't exist"),
+    ("def test_ac1_x(:\n", "acceptance.py doesn't compile"),
+    ("def helper():\n    pass\n", "no test functions"),
+])
+def test_spec_to_build_needs_acceptance_tests(sb, text, why):
+    job_id = sb.to_spec()
+    sb.spec(job_id)
+    if text is None:
+        (sb.dir(job_id) / "acceptance.py").unlink()
+    else:
+        (sb.dir(job_id) / "acceptance.py").write_text(text)
+    res = sb.job("advance", job_id, "build", check=False)
+    assert res.returncode == 1 and why in res.stderr
+    assert sb.state(job_id)["stage"] == "spec"
+
+
+def test_spec_to_build_seals_the_acceptance_tests_and_runs_them_on_the_base(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    s = sb.state(job_id)
+    assert s["stage"] == "build" and "acceptance.py" in s["files"]
+    base = (sb.dir(job_id) / "acceptance-base.md").read_text()
+    assert base.startswith("ACCEPTANCE ON BASE: 0 passed, 1 failed")
+    events = [json.loads(x) for x in (sb.dir(job_id) / "events.jsonl").read_text().splitlines()]
+    assert any(e["event"] == "acceptance-base" and e["failed"] == 1 for e in events)
+
+
+def test_acceptance_tests_that_already_pass_on_the_base_only_warn(sb):
+    job_id = sb.to_spec()
+    sb.spec(job_id)
+    res = sb.job("advance", job_id, "build")
+    assert "already pass" in res.stderr and sb.state(job_id)["stage"] == "build"
+    base = (sb.dir(job_id) / "acceptance-base.md").read_text()
+    assert base.startswith("ACCEPTANCE ON BASE: 1 passed, 0 failed")
+
+
+def test_gate_fails_when_the_acceptance_tests_fail_though_the_checks_pass(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    res = gate_after(sb, job_id)
+    assert res.returncode == 1, res.stdout
+    rd = sb.dir(job_id) / "round-1"
+    checks = (rd / "checks.md").read_text()
+    assert checks.startswith("GATE: FAIL") and "checks.sh passed" in checks
+    assert "## Acceptance tests" in checks
+    assert "1 failed" in (rd / "acceptance.log").read_text()
+
+
+def test_gate_passes_when_the_checks_and_the_acceptance_tests_pass(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    res = gate_after(sb, job_id, text="THING = 1\n")
+    assert res.returncode == 0, res.stdout
+    checks = (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    assert checks.startswith("GATE: PASS") and "1 passed" in checks
+
+
+def test_gate_fails_a_skipped_acceptance_test(sb):
+    skipped = 'import pytest\n\n\n@pytest.mark.skip\ndef test_ac1_later():\n    """AC1."""\n'
+    job_id = sb.to_build(acceptance=skipped)
+    res = gate_after(sb, job_id)
+    assert res.returncode == 1 and "acceptance" in res.stdout
+
+
+def test_gate_refuses_acceptance_tests_changed_after_they_were_sealed(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    sb.commit(job_id)
+    sb.built(job_id)
+    sb.job("advance", job_id, "gate")
+    (sb.dir(job_id) / "acceptance.py").write_text(PASSING)
+    res = sb.gate(job_id)
+    assert res.returncode == 2 and "acceptance.py changed" in res.stderr
+    assert not (sb.dir(job_id) / "round-1" / "checks.md").exists()
+
+
+def test_gate_passes_with_acceptance_off_and_no_tests(sb):
+    config = sb.repo / "factory" / "config.json"
+    data = json.loads(config.read_text())
+    data["acceptance"] = False
+    config.write_text(json.dumps(data))
+    job_id = sb.to_spec()
+    (sb.dir(job_id) / "spec.md").write_text("# spec\n")
+    sb.job("advance", job_id, "build")
+    res = gate_after(sb, job_id)
+    assert res.returncode == 0, res.stdout
+    assert not (sb.dir(job_id) / "acceptance-base.md").exists()
+
+
+def test_merge_adds_the_acceptance_tests_to_the_permanent_suite(sb):
+    job_id = sb.to_approved()
+    sb.job("merge", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "merged"
+    kept = f"acceptance/test_{job_id.replace('-', '_')}.py"
+    assert sb.base_file(kept) == (sb.dir(job_id) / "acceptance.py").read_text()
+    log = sh(["git", "log", "--format=%s", "origin/main"], sb.repo).stdout
+    assert f"Acceptance tests for {job_id} (issue 1)" in log
+    assert (sb.dir(job_id) / "round-1" / "merge-checks.md").read_text().startswith("GATE: PASS")
+
+
+def test_a_retried_merge_commits_the_acceptance_tests_once(sb):
+    job_id = sb.to_approved()
+    hook = sb.origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nwhile read old new ref; do\n"
+                    "[ \"$ref\" = refs/heads/main ] && exit 1\ndone\nexit 0\n")
+    hook.chmod(0o755)
+    sb.job("merge", job_id, check=False)
+    assert sb.state(job_id)["merge_failed"]
+    hook.unlink()
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+    log = sh(["git", "log", "--format=%s", "origin/main"], sb.repo).stdout
+    assert log.count(f"Acceptance tests for {job_id}") == 1
+
+
+def test_a_branch_that_edits_the_acceptance_suite_fails_the_gate(sb):
+    job_id = sb.to_build()
+    res = gate_after(sb, job_id, path="acceptance/README.md", text="\nAnything goes.\n")
+    assert res.returncode == 1 and "acceptance/README.md" in res.stdout
+
+
+def test_a_branch_that_adds_its_own_copy_of_the_tests_under_another_name_fails_the_gate(sb):
+    job_id = sb.to_build()
+    res = gate_after(sb, job_id, path="acceptance/test_mine.py", text=PASSING)
+    assert res.returncode == 1 and "acceptance/test_mine.py" in res.stdout
+
+
+def test_feedback_can_send_a_job_back_to_the_spec_writer(sb):
+    job_id = escalated(sb)
+    out = sb.job("feedback", job_id, "--spec", stdin="the tests ask for the wrong unit").stdout
+    s = sb.state(job_id)
+    assert s["stage"] == "spec", out
+    d = sb.dir(job_id)
+    assert not (d / "spec.md").exists() and not (d / "acceptance.py").exists()
+    assert (d / "spec-1.md").read_text() == "# spec\n" and (d / "acceptance-1.py").read_text() == PASSING
+    sb.spec(job_id, NEEDS_THING)
+    sb.job("advance", job_id, "build")
+    s = sb.state(job_id)
+    assert s["stage"] == "build" and s["round"] == 2 and s["round_limit"] == 1 + 3
+    assert "acceptance.py" in s["files"]
+
+
+def test_feedback_to_the_spec_writer_is_refused_for_a_job_parked_in_intake(sb):
+    job_id = sb.job("create", sb.issue()).stdout.strip()
+    sb.job("park", job_id, stdin="stuck")
+    res = sb.job("feedback", job_id, "--spec", stdin="x", check=False)
+    assert res.returncode == 1 and sb.state(job_id)["stage"] == "needs-human"
+
+
+def test_guard_lets_only_the_spec_writer_write_the_acceptance_tests(sb):
+    def guard(role, path):
+        event = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(path)},
+                            "cwd": str(sb.repo)})
+        return sh([str(sb.repo / "factory/bin/guard"), role], sb.repo, check=False, stdin=event).returncode
+
+    tests = sb.repo / "factory" / "jobs" / "001-x" / "acceptance.py"
+    assert guard("spec-writer", tests) == 0
+    assert guard("spec-writer", sb.repo / "factory" / "jobs" / "001-x" / "spec.md") == 0
+    assert guard("builder", tests) == 2
+    assert guard("reviewer", tests) == 2
+    assert guard("builder", sb.repo / ".worktrees" / "001-x" / "acceptance" / "test_001_x.py") == 0

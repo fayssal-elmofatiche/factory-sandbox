@@ -7,6 +7,7 @@
   "human_merge": { "risk": ["high"], "surfaces": [] },
   "max_cost_usd": 5.0,
   "gate_timeout_seconds": 1800,
+  "acceptance": true,
   "refuse_edits_after_label": true,
   "sweep": { "max_issues": 3 },
   "labels": {
@@ -36,6 +37,7 @@
     "factory/config.json",
     "factory/worktree-setup.sh",
     "factory/local-setup.sh",
+    "acceptance/*",
     "fx",
     "fx.cmd",
     ".gitattributes",

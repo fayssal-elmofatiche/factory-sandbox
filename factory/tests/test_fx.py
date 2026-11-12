@@ -24,6 +24,9 @@ import portable  # noqa: E402
 
 SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro"}
 GIT_ID = ["-c", "user.name=fx test", "-c", "user.email=fx@test.invalid"]
+# The spec writer's acceptance tests, by hand: one that passes on the base already.
+ACCEPTANCE = ('def test_ac1_the_package_imports():\n    """AC1: the package imports."""\n'
+              '    import dayahead\n\n    assert dayahead\n')
 
 
 def launch(cmd):
@@ -80,6 +83,7 @@ def merge_a_job(box, issue="1"):
     run([str(box / "factory" / "bin" / "route"), job_id], cwd=box)
     run([job, "advance", job_id, "spec"], cwd=box)
     (folder / "spec.md").write_text("# Spec\n")
+    (folder / "acceptance.py").write_text(ACCEPTANCE)
     run([job, "advance", job_id, "build"], cwd=box)
     with open(tree / "dayahead" / "seed.py", "a") as f:
         f.write("# a change\n")
@@ -349,6 +353,7 @@ def escalate_a_job(box, issue="1"):
     run([str(box / "factory" / "bin" / "route"), job_id], cwd=box)
     run([job, "advance", job_id, "spec"], cwd=box)
     (folder / "spec.md").write_text("# spec\n")
+    (folder / "acceptance.py").write_text(ACCEPTANCE)
     run([job, "advance", job_id, "build"], cwd=box)
     with open(tree / "dayahead" / "seed.py", "a") as f:
         f.write("# escalated change\n")
@@ -389,6 +394,15 @@ def test_feedback_takes_words_from_the_command_line_or_stdin(sandbox):
     assert stage(sandbox, job_id) == "needs-human"
     fx(sandbox, "reject", job_id, stdin="not needed after all")
     assert stage(sandbox, job_id) == "rejected"
+
+
+def test_feedback_spec_sends_a_job_back_to_the_spec_writer(sandbox):
+    job_id = escalate_a_job(sandbox)
+    fx(sandbox, "feedback", "1", "--spec", "the", "tests", "are", "wrong")
+    assert stage(sandbox, job_id) == "spec"
+    folder = sandbox / "factory" / "jobs" / job_id
+    assert (folder / "acceptance-1.py").exists() and not (folder / "acceptance.py").exists()
+    assert "the tests are wrong" in (folder / "feedback-1.md").read_text()
 
 
 def test_a_decision_without_words_changes_nothing(sandbox):

@@ -2,17 +2,20 @@
 """The deterministic gate: does the job's branch pass the repo's checks?
 
 Modified from ZazenCodes Software Factory v2 (GPLv3), November 2026: guarded
-paths and a timeout.
+paths, a timeout and the job's acceptance tests.
 
 Usage:
-  gate <job-id>            write round-N/checks.md; exit 0 on PASS, 1 on FAIL
-  gate <job-id> --merge    same, as round-N/merge-checks.md (job merge runs it)
-  gate --hook              builder SubagentStop hook: run the checks once, exit 2 on failure
+  gate <job-id>                write round-N/checks.md; exit 0 on PASS, 1 on FAIL
+  gate <job-id> --merge        same, as round-N/merge-checks.md (job merge runs it)
+  gate <job-id> --acceptance   run only the job's acceptance tests and print the result; writes nothing
+  gate --hook                  builder SubagentStop hook: run the checks once, exit 2 on failure
 
 The gate runs the main checkout's factory/checks.sh inside the job's worktree,
-so a branch can't change the script it is judged by. It also fails when the
-branch touches one of two lists in config.json (fnmatch patterns, where `*`
-also matches `/`):
+so a branch can't change the script it is judged by. With `acceptance` on in
+config.json it then runs the job's acceptance.py, the spec writer's black-box
+tests, against the worktree; it refuses to run at all when that file differs
+from the copy factory/bin/job sealed. It also fails when the branch touches
+one of two lists in config.json (fnmatch patterns, where `*` also matches `/`):
 
   protected_paths   existing files the branch may not modify or delete.
                     Adding new files is fine.
@@ -20,15 +23,20 @@ also matches `/`):
                     factory itself and the configuration the checks read
                     (test runner and linter settings, conftest.py). A branch
                     that could edit those could grade itself.
+
+`acceptance/*` is guarded too. The one change to it a branch may carry is the
+one `job merge` commits: the job's own sealed acceptance.py, added as
+acceptance/test_<job_id>.py.
 """
 
 import fnmatch
+import hashlib
 import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 
+import acceptance_tests as acceptance
 import portable
 
 if __name__ == "__main__":
@@ -58,13 +66,26 @@ def matches(path, patterns):
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def protected_changes(worktree):
+def kept_path(job_id):
+    """Where `job merge` adds a job's acceptance tests to the permanent suite."""
+    return f"acceptance/test_{job_id.replace('-', '_')}.py"
+
+
+def lf(data):
+    return data.replace(b"\r\n", b"\n")
+
+
+def protected_changes(worktree, job_id=None, tests=None):
     """Changes the branch may not make: any change to a guarded path, and a
-    modification or deletion of a protected one."""
+    modification or deletion of a protected one. The job's own acceptance tests,
+    added unchanged where `job merge` puts them, are not a change of that kind."""
     diff = git(worktree, "diff", "--name-status", f"origin/{CONFIG['base_branch']}...HEAD")
     hits = []
     for line in diff.splitlines():
         status, *paths = line.split("\t")
+        if (tests and status[0] in "AM" and paths == [kept_path(job_id)]
+                and lf(git_bytes(worktree, "show", f"HEAD:{paths[0]}")) == lf(tests.read_bytes())):
+            continue
         if any(matches(p, CONFIG.get("guarded_paths", [])) for p in paths):
             hits.append(f"{status[0]} {paths[-1]}")
         elif not status.startswith("A") and matches(paths[0], CONFIG["protected_paths"]):
@@ -72,20 +93,40 @@ def protected_changes(worktree):
     return hits
 
 
+def git_bytes(worktree, *args):
+    res = subprocess.run(["git", *args], cwd=worktree, capture_output=True)
+    if res.returncode != 0:
+        die(f"`git {' '.join(args)}` failed: {res.stderr.decode(errors='replace').strip()}")
+    return res.stdout
+
+
 def run_checks(worktree):
     """Run checks.sh with a time limit. A run that hangs fails with exit 124."""
-    start = time.monotonic()
-    proc = subprocess.Popen([portable.bash(), str(CHECKS)], cwd=worktree, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, **portable.own_group())
-    try:
-        out, _ = proc.communicate(timeout=TIMEOUT)
-        code = proc.returncode
-    except subprocess.TimeoutExpired:
-        portable.stop_group(proc.pid)
-        out, _ = proc.communicate()
-        out += f"\nfactory/checks.sh did not finish in {TIMEOUT}s (gate_timeout_seconds in config.json); stopped.\n"
-        code = 124
-    return code, out, int(time.monotonic() - start)
+    return acceptance.timed([portable.bash(), str(CHECKS)], worktree, TIMEOUT, "factory/checks.sh")
+
+
+def acceptance_tests(job):
+    """The job's acceptance.py when the gate must run it, else None. Refuses a
+    file that differs from the copy factory/bin/job sealed: the check is made
+    where the file is used, not only when the job moves."""
+    tests = FACTORY / "jobs" / job["id"] / acceptance.NAME
+    sealed = job.get("files", {}).get(acceptance.NAME)
+    if sealed and (not tests.exists() or hashlib.sha256(tests.read_bytes()).hexdigest() != sealed):
+        die(f"{acceptance.NAME} changed after the factory accepted it. Park the job (`job park`) and look at "
+            f"factory/jobs/{job['id']}/ before going on")
+    return tests if CONFIG.get("acceptance", True) and tests.exists() else None
+
+
+def acceptance_section(tests, code, log, seconds, name):
+    if tests is None:
+        why = "`acceptance` is off in config.json" if not CONFIG.get("acceptance", True) else "this job has none"
+        return f"Not run: {why}.", "Acceptance tests: not run"
+    passed, failed = acceptance.counts(log)
+    tail = "\n".join(log.rstrip().splitlines()[-TAIL:])
+    result = "passed" if code == 0 else f"failed with exit {code}"
+    return (f"Exit {code} in {seconds}s: {passed} passed, {failed} failed. Last {TAIL} lines of {name}.log:\n\n"
+            f"```\n{tail}\n```",
+            f"Acceptance tests {result} in {seconds}s ({passed} passed, {failed} failed)")
 
 
 def gate(job_id, merge):
@@ -94,15 +135,22 @@ def gate(job_id, merge):
     if job["round"] < 1:
         die(f"{job_id} hasn't started a build round")
     round_dir = FACTORY / "jobs" / job_id / f"round-{job['round']}"
+    tests = acceptance_tests(job)
     commit = git(worktree, "rev-parse", "HEAD").strip()
-    protected = protected_changes(worktree)
+    protected = protected_changes(worktree, job_id, tests)
     code, log, seconds = run_checks(worktree)
-    verdict = "PASS" if code == 0 and not protected else "FAIL"
+    accepted, acc_log, acc_seconds = acceptance.run(worktree, tests, TIMEOUT) if tests else (0, "", 0)
+    verdict = "PASS" if code == 0 and accepted == 0 and not protected else "FAIL"
     name = "merge-checks" if merge else "checks"
+    acc_name = "merge-acceptance" if merge else "acceptance"
     (round_dir / f"{name}.log").write_text(log)
+    if tests:
+        (round_dir / f"{acc_name}.log").write_text(acc_log)
+    acc_text, acc_summary = acceptance_section(tests, accepted, acc_log, acc_seconds, acc_name)
     tail = "\n".join(log.rstrip().splitlines()[-TAIL:])
     summary = [
         f"checks.sh {'passed' if code == 0 else f'failed with exit {code}'} in {seconds}s",
+        acc_summary,
         f"Protected and guarded paths: {'changed: ' + ', '.join(protected) if protected else 'none changed'}",
         f"Commit {commit[:7]}" + (", synced with the latest main before merging" if merge else ""),
     ]
@@ -114,10 +162,24 @@ def gate(job_id, merge):
            + "\n\nA job may not change these. If the spec can't be met without them, the builder writes "
              "STATUS: BLOCKED and a person decides." if protected else "None changed.")
         + f"\n\n## checks.sh\nExit {code} in {seconds}s. Last {TAIL} lines of {name}.log:\n\n```\n{tail}\n```\n"
+        + f"\n## Acceptance tests\n{acc_text}\n"
     )
     print(f"GATE: {verdict} ({job_id} round {job['round']}, checks.sh exit {code} in {seconds}s"
+          + (f", acceptance tests exit {accepted}" if tests else "")
           + (f", protected paths changed: {', '.join(protected)}" if protected else "") + ")")
     sys.exit(0 if verdict == "PASS" else 1)
+
+
+def only_acceptance(job_id):
+    """What the builder runs to see the acceptance tests as the gate does."""
+    job = json.loads((FACTORY / "jobs" / job_id / "job.json").read_text())
+    tests = acceptance_tests(job)
+    if tests is None:
+        print("No acceptance tests to run for this job.")
+        sys.exit(0)
+    code, log, _ = acceptance.run(job["worktree"], tests, TIMEOUT)
+    print(log, end="")
+    sys.exit(0 if code == 0 else 1)
 
 
 def hook():
@@ -136,6 +198,16 @@ def hook():
               f"build. Fix it, or write STATUS: BLOCKED in build.md if you can't.\n\n{tail}",
               file=sys.stderr)
         sys.exit(2)
+    tests = acceptance_tests(job)
+    if tests:
+        code, log, _ = acceptance.run(job["worktree"], tests, TIMEOUT)
+        if code != 0:
+            tail = "\n".join(log.rstrip().splitlines()[-40:])
+            print(f"The acceptance tests ({acceptance.NAME} in the job folder) fail in your worktree (exit {code}). "
+                  f"The gate will reject this build. Make the behaviour they test real; if a test contradicts "
+                  f"the spec or can't be met, write STATUS: BLOCKED in build.md and name it.\n\n{tail}",
+                  file=sys.stderr)
+            sys.exit(2)
 
 
 def main(argv):
@@ -145,6 +217,8 @@ def main(argv):
         gate(argv[0], merge=False)
     elif len(argv) == 2 and argv[1] == "--merge":
         gate(argv[0], merge=True)
+    elif len(argv) == 2 and argv[1] == "--acceptance":
+        only_acceptance(argv[0])
     else:
         die(__doc__.strip())
 
