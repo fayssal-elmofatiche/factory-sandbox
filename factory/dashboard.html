@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Software Factory</title>
+<script>if (new URLSearchParams(location.search).has('present')) document.documentElement.classList.add('present')</script>
 <style>
   :root {
     --bg: #14151b;
@@ -12,8 +13,9 @@
     --card-hover: #252835;
     --line: #2b2e3b;
     --text: #e4e5ea;
-    --muted: #868ba0;
-    --faint: #5b6075;
+    --muted: #9398ad;
+    --faint: #8a8fa6;   /* the quietest text: 4.6:1 on a hovered card, 5:1 on a card */
+    --rule: #5b6075;    /* borders and marks only, never text */
     --active: #8be9fd;
     --pass: #50fa7b;
     --changes: #ffb86c;
@@ -22,11 +24,13 @@
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
+  /* Type is in rem so presentation mode can scale it in one place. */
+  html { font-size: 16px; }
   html, body { margin: 0; }
   body {
     background: var(--bg);
     color: var(--text);
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    font: .875rem/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   button { font: inherit; color: inherit; }
@@ -36,8 +40,8 @@
     display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
     flex-wrap: wrap; padding: 28px 32px 8px;
   }
-  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
-  .status { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  h1 { margin: 0; font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
+  .status { font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
   .status .dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: var(--pass); margin-right: 6px; vertical-align: 1px;
@@ -46,7 +50,7 @@
   .status.error .dot { background: var(--human); }
   .banner {
     margin: 12px 32px 0; padding: 10px 14px; border: 1px solid var(--human);
-    border-radius: 8px; color: var(--human); font-family: var(--mono); font-size: 12px;
+    border-radius: 8px; color: var(--human); font-family: var(--mono); font-size: .8125rem;
   }
 
   /* Jobs that wait on a person, above everything else. */
@@ -55,7 +59,7 @@
     background: color-mix(in srgb, var(--human) 7%, var(--card));
   }
   .needs[hidden] { display: none; }
-  .needs h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--human); }
+  .needs h2 { margin: 0 0 8px; font-size: .875rem; font-weight: 600; color: var(--human); }
   .needs ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
   .needs li { display: grid; grid-template-columns: minmax(0, 18em) minmax(0, 1fr); gap: 6px 16px; align-items: start; }
   .needs .job {
@@ -80,18 +84,18 @@
     display: flex; align-items: center; gap: 8px; padding: 0 2px 10px;
     border-bottom: 1px solid var(--line); margin-bottom: 12px; position: relative;
   }
-  .col-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
-  .col-head .who { font-size: 11px; color: var(--faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col-head h2 { margin: 0; font-size: .875rem; font-weight: 600; }
+  .col-head .who { font-size: .75rem; color: var(--faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .col-head .count {
-    margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted);
+    margin-left: auto; font-family: var(--mono); font-size: .75rem; color: var(--muted);
   }
   .col:not(:last-child):not(:nth-last-child(2)) .col-head::after {
-    content: "›"; position: absolute; right: -10px; top: -2px; color: var(--faint); font-size: 16px;
+    content: "›"; position: absolute; right: -10px; top: -2px; color: var(--faint); font-size: 1rem;
   }
   .col.human .col-head { border-bottom-color: color-mix(in srgb, var(--human) 55%, transparent); }
   .col.human h2 { color: var(--human); }
   .col.merged-col h2 { color: var(--merged); }
-  .empty { color: var(--faint); font-size: 12px; padding: 4px 2px; }
+  .empty { color: var(--faint); font-size: .8125rem; padding: 4px 2px; }
 
   /* Cards */
   .card {
@@ -118,42 +122,46 @@
                 0 8px 24px -12px color-mix(in srgb, var(--human) 60%, transparent);
   }
   .card.done { opacity: .72; }
-  .card.rejected .feature { text-decoration: line-through; text-decoration-color: var(--faint); }
+  .card.rejected .feature { text-decoration: line-through; text-decoration-color: var(--rule); }
   .flag.wait { color: var(--changes); }
   .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .num { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-  .card-top .num { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .num { font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
+  /* A long slug wraps to two lines at most; the card's title attribute has all of it. */
+  .card-top .num {
+    min-width: 0; overflow-wrap: anywhere; overflow: hidden;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  }
   .pulse {
     width: 7px; height: 7px; border-radius: 50%; background: var(--active);
     animation: pulse 1.6s ease-in-out infinite;
   }
   .flag {
-    margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+    margin-left: auto; font-size: .75rem; font-weight: 600; letter-spacing: .06em;
     text-transform: uppercase; color: var(--human); white-space: nowrap;
   }
-  .feature { font-size: 13px; font-weight: 400; line-height: 1.4; margin: 0 0 6px; }
-  .links { display: flex; gap: 10px; font-family: var(--mono); font-size: 11px; }
+  .feature { font-size: .875rem; font-weight: 400; line-height: 1.4; margin: 0 0 6px; }
+  .links { display: flex; gap: 10px; font-family: var(--mono); font-size: .8125rem; }
   .links a { color: var(--active); text-decoration: none; }
   .links a:hover { text-decoration: underline; }
-  .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
   .meta .risk-high { color: var(--human); } .meta .risk-medium { color: var(--changes); }
   .chip.FAIL { border: 1px solid transparent; color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
   .branch {
-    font-family: var(--mono); font-size: 11px; color: var(--faint);
+    font-family: var(--mono); font-size: .75rem; color: var(--faint);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .rounds { margin-top: 10px; display: grid; gap: 5px; }
-  .round { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px; align-items: start; }
-  .round .r { font-family: var(--mono); font-size: 10px; color: var(--faint); padding-top: 4px; }
+  .round { display: grid; grid-template-columns: 1.6rem minmax(0, 1fr); gap: 4px; align-items: start; }
+  .round .r { font-family: var(--mono); font-size: .75rem; color: var(--faint); padding-top: 4px; }
   /* Chips sit in equal columns and wrap in step, so a job with four reviewers stays tidy. */
-  .round .cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; }
+  .round .cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.5rem, 1fr)); gap: 4px; }
   .chip {
     display: flex; flex-direction: column; justify-content: center;
-    text-align: center; font-family: var(--mono); font-size: 10px; line-height: 1.25;
-    padding: 2px 4px; border-radius: 4px; border: 1px dashed var(--faint); color: var(--faint);
+    text-align: center; font-family: var(--mono); font-size: .75rem; line-height: 1.25;
+    padding: 2px 4px; border-radius: 4px; border: 1px dashed var(--rule); color: var(--faint);
   }
   /* The model a reviewer runs on, under its name. */
-  .chip small { font-size: 9px; opacity: .72; }
+  .chip small { font-size: .75rem; }
   .chip.wait { animation: breathe 1.6s ease-in-out infinite; }
   .chip.PASS {
     border: 1px solid transparent; color: var(--pass);
@@ -166,21 +174,21 @@
   .chip.bad { border: 1px solid var(--human); color: var(--human); }
   .hint {
     margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line);
-    font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.6;
+    font-family: var(--mono); font-size: .8125rem; color: var(--muted); line-height: 1.6;
     overflow-wrap: anywhere;
   }
   /* What a person can do with a waiting job: one command per line, each with a copy button. */
   .moves { margin: 12px 0 0; display: grid; gap: 6px; }
   .moves[hidden] { display: none; }
-  .moves .why { font-size: 12px; color: var(--muted); }
+  .moves .why { font-size: .8125rem; color: var(--muted); }
   .move { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
   .move code {
-    font-family: var(--mono); font-size: 12px; background: var(--card); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: .8125rem; background: var(--card); border: 1px solid var(--line);
     border-radius: 6px; padding: 5px 8px; overflow-x: auto; white-space: nowrap; user-select: all;
   }
-  .move .what { grid-column: 1 / -1; font-size: 11.5px; color: var(--faint); margin-top: -2px; }
+  .move .what { grid-column: 1 / -1; font-size: .8125rem; color: var(--faint); margin-top: -2px; }
   .copy {
-    font-family: var(--mono); font-size: 11px; color: var(--muted); background: none; cursor: pointer;
+    font-family: var(--mono); font-size: .75rem; color: var(--muted); background: none; cursor: pointer;
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; min-width: 58px;
   }
   .copy:hover { color: var(--text); border-color: var(--muted); }
@@ -204,25 +212,25 @@
   .open .scrim { opacity: 1; pointer-events: auto; }
   .open .drawer { transform: none; }
   .d-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); position: relative; }
-  .d-head .num { font-size: 12px; }
-  .d-head h2 { margin: 4px 40px 6px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+  .d-head .num { font-size: .8125rem; }
+  .d-head h2 { margin: 4px 40px 6px 0; font-size: 1rem; font-weight: 600; line-height: 1.35; }
   .close {
     position: absolute; top: 16px; right: 16px; width: 32px; height: 32px;
     border-radius: 8px; border: 1px solid var(--line); background: none; cursor: pointer;
-    color: var(--muted); font-size: 18px; line-height: 1;
+    color: var(--muted); font-size: 1.125rem; line-height: 1;
   }
   .close:hover { color: var(--text); border-color: var(--muted); }
-  .d-body { display: grid; grid-template-columns: 200px 1fr; min-height: 0; }
+  .d-body { display: grid; grid-template-columns: 13rem 1fr; min-height: 0; }
   .files { border-right: 1px solid var(--line); padding: 14px 10px; overflow-y: auto; }
   .files .group {
-    font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+    font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
     color: var(--faint); margin: 12px 8px 4px;
   }
   .files .group:first-child { margin-top: 0; }
   .file {
     display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
     background: none; border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer;
-    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    font-family: var(--mono); font-size: .8125rem; color: var(--muted);
   }
   .file:hover { background: var(--card); color: var(--text); }
   .file.on { background: var(--card-hover); color: var(--text); }
@@ -234,7 +242,7 @@
   /* Rendered markdown */
   .md { max-width: 680px; line-height: 1.65; }
   .md h1, .md h2, .md h3, .md h4 { line-height: 1.3; margin: 1.6em 0 .5em; }
-  .md h1 { font-size: 20px; } .md h2 { font-size: 15px; } .md h3 { font-size: 14px; color: var(--muted); }
+  .md h1 { font-size: 1.25rem; } .md h2 { font-size: .9375rem; } .md h3 { font-size: .875rem; color: var(--muted); }
   .md > :first-child { margin-top: 0; }
   .md p, .md ul, .md ol, .md blockquote, .md pre, .md table { margin: 0 0 .9em; }
   .md ul, .md ol { padding-left: 1.3em; }
@@ -243,7 +251,7 @@
   .md li.task::before { content: "☐"; margin-right: .5em; color: var(--faint); }
   .md li.task.done::before { content: "☑"; color: var(--pass); }
   .md code {
-    font-family: var(--mono); font-size: 12px; background: var(--card);
+    font-family: var(--mono); font-size: .75rem; background: var(--card);
     padding: 1px 5px; border-radius: 4px;
   }
   .md pre {
@@ -253,30 +261,30 @@
   .md pre code { background: none; padding: 0; }
   .md blockquote { border-left: 2px solid var(--line); padding-left: 12px; color: var(--muted); }
   .md a { color: var(--active); }
-  .md table { border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
+  .md table { border-collapse: collapse; font-size: .8125rem; display: block; overflow-x: auto; }
   .md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
   .verdict {
-    display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 600;
+    display: inline-block; font-family: var(--mono); font-size: .8125rem; font-weight: 600;
     padding: 4px 10px; border-radius: 6px; margin-bottom: 14px;
   }
   .verdict + * { margin-top: .4em; }
-  .md .head { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: -6px 0 14px; white-space: pre-line; }
+  .md .head { font-family: var(--mono); font-size: .8125rem; color: var(--muted); margin: -6px 0 14px; white-space: pre-line; }
   .verdict.good { color: var(--pass); background: color-mix(in srgb, var(--pass) 14%, transparent); }
   .verdict.warn { color: var(--changes); background: color-mix(in srgb, var(--changes) 16%, transparent); }
   .verdict.stop { color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
-  .note { color: var(--faint); font-size: 13px; }
+  .note { color: var(--faint); font-size: .8125rem; }
   .md .summary {
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 12px 16px 4px; margin: 0 0 22px;
   }
   .md .summary h2 {
-    margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    margin: 0 0 6px; font-size: .75rem; font-weight: 600; text-transform: uppercase;
     letter-spacing: .08em; color: var(--muted);
   }
   .md .summary ul { margin: 0 0 .6em; }
 
   footer {
-    padding: 0 32px 32px; font-family: var(--mono); font-size: 11px; color: var(--faint);
+    padding: 0 32px 32px; font-family: var(--mono); font-size: .75rem; color: var(--faint);
     display: flex; gap: 20px; flex-wrap: wrap;
   }
 
@@ -287,15 +295,20 @@
     background: var(--card);
   }
   .totals:empty { display: none; }
-  .stat .k { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-  .stat b { display: block; font-size: 22px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
-  .stat .d { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .stat .k { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
+  .stat b { display: block; font-size: 1.375rem; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+  .stat .d { font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
   .totals .row {
     grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 18px; padding-top: 10px;
-    border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--muted);
+    border-top: 1px solid var(--line); font-family: var(--mono); font-size: .8125rem; color: var(--muted);
   }
   .totals .row .k { color: var(--faint); }
   .totals .row b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  /* Presentation mode, for a projector: ?present, or any very wide screen, sets type a quarter larger. */
+  @media (min-width: 1600px) { html { font-size: 20px; } }
+  html.present { font-size: 20px; }
+  html.present footer { display: none; }
 
   @media (max-width: 1100px) {
     .board { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 28px; }
@@ -482,7 +495,7 @@ function card(job, rounds) {
              data-job="${esc(job.id)}">
       <div class="card-top">
         ${live ? '<span class="pulse" role="img" aria-label="running"></span>' : ''}
-        <span class="num">${esc(num)} · ${esc(slug.join('-'))}</span>
+        <span class="num" title="${esc(job.id)}">${esc(num)} · ${esc(slug.join('-'))}</span>
         ${flag}
       </div>
       <h3 class="feature"><button class="open" aria-label="${esc(`${num} ${job.title}, ${state}`)}">${esc(job.title)}</button></h3>
