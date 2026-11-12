@@ -79,22 +79,25 @@ class OrderBook:
     def clear(self, hour: int) -> Clearing:
         """Clear one hour by merit order.
 
-        Offers are stacked cheapest first and bids dearest first. The cleared
-        volume is the most that trades at any single price, and the clearing
-        price is the lowest price at which that volume trades.
+        Offers are stacked cheapest first and bids dearest first. The clearing
+        price is the lowest price at which the two stacks meet: every bid
+        priced above it and every offer priced below it trades in full, and
+        only orders priced exactly at it may be cut. So the marginal order
+        sets the price, whether it is an offer (supply is the short side) or
+        a bid (demand is).
         """
         orders = self.orders(hour)
         bids = [o for o in orders if o.side == "bid"]
         offers = [o for o in orders if o.side == "offer"]
-        best_price: float | None = None
-        best_volume = 0.0
         for price in sorted({o.price for o in orders}):
             demand = sum(o.volume_mwh for o in bids if o.price >= price)
             supply = sum(o.volume_mwh for o in offers if o.price <= price)
-            volume = min(demand, supply)
-            if volume > best_volume:
-                best_price, best_volume = price, volume
-        return Clearing(hour, best_price, best_volume, len(bids), len(offers))
+            demand_above = sum(o.volume_mwh for o in bids if o.price > price)
+            supply_below = sum(o.volume_mwh for o in offers if o.price < price)
+            if demand_above <= supply and supply_below <= demand:
+                volume = min(demand, supply)
+                return Clearing(hour, price if volume > 0 else None, volume, len(bids), len(offers))
+        return Clearing(hour, None, 0.0, len(bids), len(offers))
 
     def results(self) -> list[Clearing]:
         """The clearing of every delivery hour of the day, 0 to 23."""

@@ -125,16 +125,14 @@ The factory appends its comments below the body, each between a
 `<!-- comment by <name> at <time> -->` line and a `<!-- /comment -->` line, and
 sets `state: closed` when the job merges. To answer a question the factory
 asked, type your reply at the end of the file, below the last
-`<!-- /comment -->`, or use `factory/bin/job answer`. A file the factory can't
+`<!-- /comment -->`, or use `./fx answer <job>`. A file the factory can't
 read is skipped with a warning; other files in the folder are ignored. You can
 write issue files by hand or use the commands:
 
 ```bash
 ./fx issues                            # list issues: number, state, labels, title
 ./fx queue 2                           # queue issue 2; the label is the trigger
-factory/bin/job new-issue "Short imperative title" <<'TXT'
-What you want built.
-TXT
+./fx new "Short imperative title" What you want built.
 ```
 
 `factory/issues/` is gitignored, like `factory/jobs/`: both are state on your

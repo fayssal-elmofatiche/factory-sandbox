@@ -12,14 +12,26 @@
     --card-hover: #252835;
     --line: #2b2e3b;
     --text: #e4e5ea;
-    --muted: #868ba0;
-    --faint: #5b6075;
+    --muted: #a3a8bb;
+    --faint: #8087a0;
     --active: #8be9fd;
     --pass: #50fa7b;
     --changes: #ffb86c;
     --human: #ff5555;
     --merged: #bd93f9;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --scrim: rgba(5, 6, 10, .55);
+    color-scheme: dark;
+  }
+  /* A lit room and a projector want dark text on a light ground. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f8; --panel: #ffffff; --card: #ffffff; --card-hover: #eef0f5; --line: #d3d7e0;
+      --text: #1a1c23; --muted: #4c5266; --faint: #646a7f;
+      --active: #0a6b94; --pass: #14753a; --changes: #8f5300; --human: #c12727; --merged: #6739c0;
+      --scrim: rgba(40, 44, 60, .35);
+      color-scheme: light;
+    }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -37,7 +49,7 @@
     flex-wrap: wrap; padding: 28px 32px 8px;
   }
   h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
-  .status { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .status { font-family: var(--mono); font-size: 13px; color: var(--muted); }
   .status .dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: var(--pass); margin-right: 6px; vertical-align: 1px;
@@ -46,8 +58,28 @@
   .status.error .dot { background: var(--human); }
   .banner {
     margin: 12px 32px 0; padding: 10px 14px; border: 1px solid var(--human);
-    border-radius: 8px; color: var(--human); font-family: var(--mono); font-size: 12px;
+    border-radius: 8px; color: var(--human); font-family: var(--mono); font-size: 13px;
   }
+
+  /* What waits for a person, above everything else. */
+  .waiting {
+    margin: 14px 32px 0; padding: 12px 14px 4px; border: 1px solid var(--human); border-radius: 10px;
+    background: color-mix(in srgb, var(--human) 7%, var(--card));
+  }
+  .waiting:empty { display: none; }
+  .waiting h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--human); }
+  .ask {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline;
+    padding: 9px 4px; border-top: 1px solid var(--line); cursor: pointer; border-radius: 6px;
+  }
+  .ask:hover { background: color-mix(in srgb, var(--human) 6%, transparent); }
+  .ask:focus-visible { outline: 2px solid var(--active); outline-offset: 1px; }
+  .ask .flag { margin: 0; }
+  .ask .title { font-size: 14px; font-weight: 600; min-width: 0; }
+  .ask .title small { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .ask code { font-family: var(--mono); font-size: 13px; color: var(--text); white-space: nowrap; }
+  .ask .q { grid-column: 2 / -1; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+  .replay { color: var(--changes); }
 
   /* Board */
   .board {
@@ -59,10 +91,10 @@
     display: flex; align-items: center; gap: 8px; padding: 0 2px 10px;
     border-bottom: 1px solid var(--line); margin-bottom: 12px; position: relative;
   }
-  .col-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
-  .col-head .who { font-size: 11px; color: var(--faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .col-head .who { font-size: 12px; color: var(--faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .col-head .count {
-    margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted);
+    margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted);
   }
   .col:not(:last-child):not(:nth-last-child(2)) .col-head::after {
     content: "›"; position: absolute; right: -10px; top: -2px; color: var(--faint); font-size: 16px;
@@ -70,7 +102,7 @@
   .col.human .col-head { border-bottom-color: color-mix(in srgb, var(--human) 55%, transparent); }
   .col.human h2 { color: var(--human); }
   .col.merged-col h2 { color: var(--merged); }
-  .empty { color: var(--faint); font-size: 12px; padding: 4px 2px; }
+  .empty { color: var(--faint); font-size: 13px; padding: 4px 2px; }
 
   /* Cards */
   .card {
@@ -91,39 +123,39 @@
   .card.rejected .feature { text-decoration: line-through; text-decoration-color: var(--faint); }
   .flag.wait { color: var(--changes); }
   .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .num { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .num { font-family: var(--mono); font-size: 13px; color: var(--muted); }
   .card-top .num { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pulse {
     width: 7px; height: 7px; border-radius: 50%; background: var(--active);
     animation: pulse 1.6s ease-in-out infinite;
   }
   .flag {
-    margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+    margin-left: auto; font-size: 11.5px; font-weight: 600; letter-spacing: .06em;
     text-transform: uppercase; color: var(--human); white-space: nowrap;
   }
-  .feature { font-size: 13px; line-height: 1.4; margin: 0 0 6px; }
-  .links { display: flex; gap: 10px; font-family: var(--mono); font-size: 11px; }
+  .feature { font-size: 14px; line-height: 1.4; margin: 0 0 6px; }
+  .links { display: flex; gap: 10px; font-family: var(--mono); font-size: 12px; }
   .links a { color: var(--active); text-decoration: none; }
   .links a:hover { text-decoration: underline; }
-  .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .meta .risk-high { color: var(--human); } .meta .risk-medium { color: var(--changes); }
   .chip.FAIL { border: 1px solid transparent; color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
   .branch {
-    font-family: var(--mono); font-size: 11px; color: var(--faint);
+    font-family: var(--mono); font-size: 12px; color: var(--faint);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .rounds { margin-top: 10px; display: grid; gap: 5px; }
   .round { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px; align-items: start; }
-  .round .r { font-family: var(--mono); font-size: 10px; color: var(--faint); padding-top: 4px; }
+  .round .r { font-family: var(--mono); font-size: 11.5px; color: var(--faint); padding-top: 4px; }
   /* Chips sit in equal columns and wrap in step, so a job with four reviewers stays tidy. */
-  .round .cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; }
+  .round .cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 4px; }
   .chip {
     display: flex; flex-direction: column; justify-content: center;
-    text-align: center; font-family: var(--mono); font-size: 10px; line-height: 1.25;
+    text-align: center; font-family: var(--mono); font-size: 11.5px; line-height: 1.25;
     padding: 2px 4px; border-radius: 4px; border: 1px dashed var(--faint); color: var(--faint);
   }
   /* The model a reviewer runs on, under its name. */
-  .chip small { font-size: 9px; opacity: .72; }
+  .chip small { font-size: 11px; opacity: .72; }
   .chip.wait { animation: breathe 1.6s ease-in-out infinite; }
   .chip.PASS {
     border: 1px solid transparent; color: var(--pass);
@@ -136,21 +168,21 @@
   .chip.bad { border: 1px solid var(--human); color: var(--human); }
   .hint {
     margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line);
-    font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.6;
+    font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.6;
     overflow-wrap: anywhere;
   }
   /* What a person can do with a waiting job: one command per line, each with a copy button. */
   .moves { margin: 12px 0 0; display: grid; gap: 6px; }
   .moves[hidden] { display: none; }
-  .moves .why { font-size: 12px; color: var(--muted); }
+  .moves .why { font-size: 13px; color: var(--muted); }
   .move { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
   .move code {
-    font-family: var(--mono); font-size: 12px; background: var(--card); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 13px; background: var(--card); border: 1px solid var(--line);
     border-radius: 6px; padding: 5px 8px; overflow-x: auto; white-space: nowrap; user-select: all;
   }
-  .move .what { grid-column: 1 / -1; font-size: 11.5px; color: var(--faint); margin-top: -2px; }
+  .move .what { grid-column: 1 / -1; font-size: 12.5px; color: var(--faint); margin-top: -2px; }
   .copy {
-    font-family: var(--mono); font-size: 11px; color: var(--muted); background: none; cursor: pointer;
+    font-family: var(--mono); font-size: 12px; color: var(--muted); background: none; cursor: pointer;
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; min-width: 58px;
   }
   .copy:hover { color: var(--text); border-color: var(--muted); }
@@ -162,7 +194,7 @@
 
   /* Drawer */
   .scrim {
-    position: fixed; inset: 0; background: rgba(5, 6, 10, .55);
+    position: fixed; inset: 0; background: var(--scrim);
     opacity: 0; pointer-events: none; transition: opacity .2s;
   }
   .drawer {
@@ -174,7 +206,7 @@
   .open .scrim { opacity: 1; pointer-events: auto; }
   .open .drawer { transform: none; }
   .d-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); position: relative; }
-  .d-head .num { font-size: 12px; }
+  .d-head .num { font-size: 13px; }
   .d-head h3 { margin: 4px 40px 6px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
   .close {
     position: absolute; top: 16px; right: 16px; width: 32px; height: 32px;
@@ -185,14 +217,14 @@
   .d-body { display: grid; grid-template-columns: 200px 1fr; min-height: 0; }
   .files { border-right: 1px solid var(--line); padding: 14px 10px; overflow-y: auto; }
   .files .group {
-    font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
     color: var(--faint); margin: 12px 8px 4px;
   }
   .files .group:first-child { margin-top: 0; }
   .file {
     display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
     background: none; border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer;
-    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    font-family: var(--mono); font-size: 13px; color: var(--muted);
   }
   .file:hover { background: var(--card); color: var(--text); }
   .file.on { background: var(--card-hover); color: var(--text); }
@@ -213,7 +245,7 @@
   .md li.task::before { content: "☐"; margin-right: .5em; color: var(--faint); }
   .md li.task.done::before { content: "☑"; color: var(--pass); }
   .md code {
-    font-family: var(--mono); font-size: 12px; background: var(--card);
+    font-family: var(--mono); font-size: 13px; background: var(--card);
     padding: 1px 5px; border-radius: 4px;
   }
   .md pre {
@@ -223,30 +255,31 @@
   .md pre code { background: none; padding: 0; }
   .md blockquote { border-left: 2px solid var(--line); padding-left: 12px; color: var(--muted); }
   .md a { color: var(--active); }
-  .md table { border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
+  .md table { border-collapse: collapse; font-size: 14px; display: block; overflow-x: auto; }
   .md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
   .verdict {
-    display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 600;
+    display: inline-block; font-family: var(--mono); font-size: 13px; font-weight: 600;
     padding: 4px 10px; border-radius: 6px; margin-bottom: 14px;
   }
   .verdict + * { margin-top: .4em; }
-  .md .head { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: -6px 0 14px; white-space: pre-line; }
+  .md .head { font-family: var(--mono); font-size: 13px; color: var(--muted); margin: -6px 0 14px; white-space: pre-line; }
   .verdict.good { color: var(--pass); background: color-mix(in srgb, var(--pass) 14%, transparent); }
   .verdict.warn { color: var(--changes); background: color-mix(in srgb, var(--changes) 16%, transparent); }
   .verdict.stop { color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
-  .note { color: var(--faint); font-size: 13px; }
+  .note { color: var(--faint); font-size: 14px; }
   .md .summary {
+    display: block;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 12px 16px 4px; margin: 0 0 22px;
   }
   .md .summary h2 {
-    margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .08em; color: var(--muted);
   }
   .md .summary ul { margin: 0 0 .6em; }
 
   footer {
-    padding: 0 32px 32px; font-family: var(--mono); font-size: 11px; color: var(--faint);
+    padding: 0 32px 32px; font-family: var(--mono); font-size: 12px; color: var(--faint);
     display: flex; gap: 20px; flex-wrap: wrap;
   }
 
@@ -257,12 +290,12 @@
     background: var(--card);
   }
   .summary:empty { display: none; }
-  .stat .k { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .stat .k { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .stat b { display: block; font-size: 22px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
-  .stat .d { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .stat .d { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .summary .row {
     grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 18px; padding-top: 10px;
-    border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--muted);
+    border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted);
   }
   .summary .row .k { color: var(--faint); }
   .summary .row b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -275,6 +308,10 @@
     header { padding: 20px 16px 4px; }
     .banner { margin: 12px 16px 0; }
     .summary { margin: 12px 16px 0; }
+    .waiting { margin: 12px 16px 0; }
+    .ask { grid-template-columns: auto minmax(0, 1fr); }
+    .ask code { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
+    .ask .q { grid-column: 1 / -1; }
     .board { grid-template-columns: 1fr; padding: 16px 16px 32px; }
     footer { padding: 0 16px 24px; }
     .d-head { padding: 16px; }
@@ -296,6 +333,7 @@
   <div class="status" id="status">connecting…</div>
 </header>
 <div id="banner"></div>
+<section class="waiting" id="waiting" aria-label="Waiting for you"></section>
 <section class="summary" id="summary" aria-label="Factory totals"></section>
 <main class="board" id="board"></main>
 <footer>
@@ -324,6 +362,12 @@
 
 <script>
 const POLL_MS = 2000
+// `fx demo` plays a saved run into replay/ and opens this page with ?dir=replay.
+const REPLAY = new URLSearchParams(location.search).get('dir') === 'replay'
+const JOBS = REPLAY ? 'replay/' : 'jobs/'
+// A replay runs faster than the run it shows, so it brings its own clock.
+let clock = null
+const nowMs = () => clock ? Date.parse(clock.now) : Date.now()
 const COLUMNS = [
   { label: 'Intake', who: 'intake · fable', stages: ['intake', 'needs-info'] },
   { label: 'Spec', who: 'spec-writer · opus', stages: ['spec'] },
@@ -370,7 +414,7 @@ function verdictOf(line) {
 async function roundVerdicts(job, n) {
   const key = `${job.id}/${n}`
   if (roundCache.has(key)) return roundCache.get(key)
-  const dir = `jobs/${job.id}/round-${n}/`
+  const dir = `${JOBS}${job.id}/round-${n}/`
   const v = { gate: verdictOf(await fetchFirst(dir + 'checks.md')), reviews: {} }
   if (v.gate === 'PASS') {
     await Promise.all(Object.keys(job.agents?.reviewers || {}).map(async (r) => {
@@ -400,7 +444,7 @@ function roundRow(job, n, v) {
 }
 
 function elapsed(job) {
-  const end = job.ended ? new Date(job.ended) : new Date()
+  const end = job.ended ? new Date(job.ended) : new Date(nowMs())
   const min = Math.max(0, Math.floor((end - new Date(job.started)) / 60000))
   return min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m` : `${min}m`
 }
@@ -420,7 +464,7 @@ function links(job) {
 // running job usually means its agent is still working, or has died.
 function quiet(job) {
   if (!job.updated) return ''
-  const min = Math.floor((Date.now() - new Date(job.updated)) / 60000)
+  const min = Math.floor((nowMs() - new Date(job.updated)) / 60000)
   return min >= 10 ? `<span title="no script has touched this job for ${min} minutes">quiet ${min}m</span>` : ''
 }
 
@@ -458,6 +502,50 @@ function card(job, rounds) {
     </article>`
 }
 
+// ---- Waiting for you -----------------------------------------------------
+
+const asked = new Map() // "<job>:<updated>" -> the one line that says what the job waits for
+
+// The question a waiting job has for a person: the approver's "For the human",
+// intake's first question, or the reason an escalation gives.
+async function question(job) {
+  const key = `${job.id}:${job.updated}`
+  if (asked.has(key)) return asked.get(key)
+  const info = job.stage === 'needs-info'
+  let line = ''
+  try {
+    const text = await fetchText(`${JOBS}${job.id}/${info ? 'intake.md' : 'decision.md'}`)
+    for (const heading of info ? ['Questions'] : ['For the human', 'Why']) {
+      const m = text.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |$(?![\\s\\S]))`, 'm'))
+      line = (m ? m[1] : '').split('\n').map((l) => l.trim()).find(Boolean) || ''
+      if (line) break
+    }
+  } catch { /* the file isn't there yet */ }
+  line = line.replace(/^([-*+]|\d+\.)\s+/, '')
+  asked.set(key, line)
+  return line
+}
+
+async function waitingHtml() {
+  const waiting = jobs.filter((j) => WITH_PERSON.has(j.stage))
+  document.title = waiting.length ? `(${waiting.length}) Software Factory` : 'Software Factory'
+  if (!waiting.length) return ''
+  const rows = await Promise.all(waiting.map(async (job) => {
+    const info = job.stage === 'needs-info'
+    const cmd = info ? `./fx answer ${job.id}` : job.merge_failed ? `./fx retry ${job.id}` : `./fx show ${job.id}`
+    const flag = info ? 'a question' : job.merge_failed ? 'merge failed' : 'your call'
+    const q = await question(job)
+    return `
+      <div class="ask" data-job="${esc(job.id)}" tabindex="0" role="button">
+        <span class="flag ${info ? 'wait' : ''}">${flag}</span>
+        <span class="title">${esc(job.title)}<small>issue #${esc(job.issue)}</small></span>
+        <code>${esc(cmd)}</code>
+        ${q ? `<span class="q">${inline(q)}</span>` : ''}
+      </div>`
+  }))
+  return `<h2>Waiting for you: ${waiting.length}</h2>${rows.join('')}`
+}
+
 // ---- Summary -------------------------------------------------------------
 
 const FINISHED = new Set(['merged', 'rejected'])
@@ -465,13 +553,14 @@ const WITH_PERSON = new Set(['needs-info', 'needs-human'])
 const STATIONS = ['intake', 'spec', 'build', 'gate', 'review', 'approve', 'merging']
 const stageCache = new Map() // job id -> ms per stage, once the job is finished
 let lastSummary = ''
+let lastWaiting = ''
 let previous = { at: 0, value: null }
 
 // Time spent in each stage, from the job's event log. Older jobs have no log.
 async function stageTimes(job) {
   if (stageCache.has(job.id)) return stageCache.get(job.id)
   let text
-  try { text = await fetchText(`jobs/${job.id}/events.jsonl`) } catch {
+  try { text = await fetchText(`${JOBS}${job.id}/events.jsonl`) } catch {
     stageCache.set(job.id, null) // a job from before the event log existed: don't ask again
     return null
   }
@@ -598,6 +687,11 @@ async function render() {
     stats.push({ job, rounds: verdicts, stages: await stageTimes(job) })
     cards.get(COLUMNS.find((c) => c.stages.includes(job.stage))).push(card(job, rounds))
   }
+  const waiting = await waitingHtml()
+  if (waiting !== lastWaiting) {
+    lastWaiting = waiting
+    $('waiting').innerHTML = waiting
+  }
   const summary = summaryHtml(summarise(stats), await previousRun())
   if (summary !== lastSummary) {
     lastSummary = summary
@@ -626,11 +720,18 @@ async function render() {
 async function poll() {
   const status = $('status')
   try {
+    if (REPLAY) {
+      const next = JSON.parse(await fetchText(JOBS + 'clock.json'))
+      if (clock && clock.run !== next.run) return location.reload() // a new replay started: forget this one
+      clock = next
+    }
     jobs = await loadJobs()
     await render()
     if (openJobId) await refreshDrawer()
     status.className = 'status'
-    status.innerHTML = `<span class="dot"></span>jobs/ · ${new Date().toLocaleTimeString()}`
+    status.innerHTML = REPLAY
+      ? `<span class="dot"></span><span class="replay">replay of a saved run, ${clock.done ? 'finished' : 'playing'}</span> · ${new Date(nowMs()).toLocaleTimeString()}`
+      : `<span class="dot"></span>jobs/ · ${new Date().toLocaleTimeString()}`
   } catch (err) {
     status.className = 'status error'
     status.innerHTML = `<span class="dot"></span>${esc(err.message)}`
@@ -640,7 +741,7 @@ async function poll() {
 // factory/bin/job writes each jobs/<id>/job.json.
 async function loadJobs() {
   let listing
-  try { listing = await fetchText('jobs/') } catch (err) {
+  try { listing = await fetchText(JOBS) } catch (err) {
     if (err.status === 404) return []  // no job yet: the folder appears with the first one
     throw new Error('the dashboard server is not answering. Start it again with ./fx up')
   }
@@ -653,7 +754,7 @@ async function loadJobs() {
   // A folder whose job.json is missing or half-written is skipped for this poll, as
   // factory/bin/job skips it; one such folder must not stop the whole board.
   const loaded = await Promise.all(ids.map(async (id) => {
-    try { return JSON.parse(await fetchText(`jobs/${id}/job.json`)) } catch (err) {
+    try { return JSON.parse(await fetchText(`${JOBS}${id}/job.json`)) } catch (err) {
       if (err.status === undefined && !(err instanceof SyntaxError)) throw err  // the server went away
       return null
     }
@@ -718,7 +819,7 @@ function moves(job) {
   }
   if (job.stage === 'needs-info') {
     return { why: 'The factory asked the author a question. See intake.md below.', list: [
-      [`factory/bin/job answer ${id}`, 'Answer it. Your words go on the issue (type them, then Ctrl-D).'],
+      [`./fx answer ${id}`, 'Answer it. Write your answer after the command; it is posted on the issue. Then ./fx run.'],
       [`./fx reject ${id}`, 'Drop it. Your reason is posted on the issue.'],
     ] }
   }
@@ -769,7 +870,7 @@ async function refreshDrawer() {
     $('d-moves').hidden = !m
   }
 
-  const base = `jobs/${job.id}/`
+  const base = `${JOBS}${job.id}/`
   const files = sortFiles(await listFiles(base))
   if (!openPath || !files.includes(openPath)) openPath = files[0] || null
 

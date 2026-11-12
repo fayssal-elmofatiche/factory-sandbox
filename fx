@@ -9,6 +9,7 @@ Run `fx` for the list of commands and `fx <command> --help` for one of them.
 """
 
 import argparse
+import calendar
 import json
 import os
 import re
@@ -245,7 +246,8 @@ def deck_url():
     return DECK.as_uri()
 
 
-def cmd_up(args):
+def dashboard():
+    """The running dashboard server, started if it isn't up: {pid, port}."""
     st = dashboard_state()
     if not st:
         port = free_port()
@@ -262,6 +264,11 @@ def cmd_up(args):
             portable.stop(proc.pid)
             die("the dashboard server did not start; see " + str(state_dir() / "dashboard.log"))
         (state_dir() / "dashboard.json").write_text(json.dumps(st))
+    return st
+
+
+def cmd_up(args):
+    st = dashboard()
     dash = f"http://127.0.0.1:{st['port']}/dashboard.html"
     print(f"dashboard     {dash}")
     if "--no-open" not in args:
@@ -302,6 +309,207 @@ def cmd_run(args):
     if portable.WINDOWS:  # Windows has no exec: run Claude Code and pass its exit code on
         return subprocess.run([shutil.which("claude"), prompt]).returncode
     os.execvp("claude", ["claude", prompt])
+
+
+# ---- demo: replay a saved run ----------------------------------------------
+#
+# A run that `fx reset --keep` saved is a folder of finished job folders. Each
+# has events.jsonl, the job's transitions in order, and the files the stations
+# wrote. `fx demo` plays them back into factory/replay/, one step at a time,
+# and the dashboard shows that folder instead of factory/jobs/. No agent runs
+# and nothing in factory/jobs/, the issues or git changes.
+
+REPLAY = FACTORY / "replay"
+STOPS = {"needs-info", "needs-human", "merged", "rejected"}
+
+
+def saved_run(name):
+    """The folder of job folders to replay: the one named, else the run saved
+    last under factory/runs/, else the one that ships in factory/demo-run/."""
+    def jobs_in(d):
+        return d.is_dir() and any((x / "job.json").exists() for x in d.iterdir())
+    if name:
+        for d in (Path(name), FACTORY / "runs" / name):
+            if jobs_in(d):
+                return d
+        die(f"{name} is not a saved run: no job folders in it")
+    runs = FACTORY / "runs"
+    saved = sorted(d for d in runs.iterdir() if jobs_in(d)) if runs.exists() else []
+    if saved:
+        return saved[-1]
+    if jobs_in(FACTORY / "demo-run"):
+        return FACTORY / "demo-run"
+    die("no saved run to replay. `./fx reset --keep` saves the current run under factory/runs/; "
+        "after that, `./fx demo` plays it back")
+
+
+def stamp(text):
+    return calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def iso(seconds):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def replay_steps(run):
+    """Every step of a saved run, in the order it happened, as
+    (time, job id, what to write, the job's record after the step, a line to print).
+
+    The saved folder holds only how each job ended, so the steps are rebuilt
+    from its event log: each transition names the stage a job left, and that
+    stage's file is shown just before the job moves on."""
+    steps = []
+    for folder in sorted(d for d in run.iterdir() if (d / "job.json").exists()):
+        final = json.loads((folder / "job.json").read_text(encoding="utf-8"))
+        log = folder / "events.jsonl"
+        lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        events = [json.loads(line) for line in lines if line.strip()]
+        moves = [e for e in events if e.get("event") in {"create", "advance"} and e.get("at")]
+        if not moves:
+            continue
+        names = {p.relative_to(folder).as_posix() for p in folder.rglob("*")
+                 if p.is_file() and p.name not in {"job.json", "events.jsonl"}}
+        shown = set()   # names as they are in the saved folder
+        written = {}    # stem -> how often that file has been written so far
+        state = {**final, "stage": "intake", "round": 0, "intake": None, "agents": None, "gated_sha": None,
+                 "merged_sha": None, "merge_failed": False, "ended": None, "cost_usd": 0.0, "reviews": {}}
+        state.pop("cost_incomplete", None)
+        log_so_far = []
+
+        def versioned(stem):
+            """decision.md and intake.md are rewritten and the old one kept as
+            <stem>-<k>.md: the k-th writing is <stem>-<k>.md if the job kept it."""
+            k = written[stem] = written.get(stem, 0) + 1
+            src = f"{stem}-{k}.md" if f"{stem}-{k}.md" in names else f"{stem}.md"
+            if src in shown or src not in names:
+                return []
+            shown.add(src)
+            keep = [("rename", f"{stem}.md", f"{stem}-{k - 1}.md")] if k > 1 else []
+            return keep + [("copy", src, f"{stem}.md")]
+
+        def plain(*wanted):
+            out = []
+            for name in sorted(n for n in names if n not in shown and any(
+                    n == w or (w.endswith("*") and n.startswith(w[:-1])) for w in wanted)):
+                shown.add(name)
+                out.append(("copy", name, name))
+            return out
+
+        def add(at, writes, note=None):
+            steps.append((at, final["id"], writes + [("events", list(log_so_far))], dict(state), note))
+
+        before = stamp(moves[0]["at"])
+        for n, e in enumerate(moves):
+            at = stamp(e["at"])
+            old, new, rnd = e.get("from"), e.get("to"), e.get("round", 0)
+            last_round = rnd - 1 if new == "build" and old in {"gate", "review"} else rnd
+            reveal = []  # each entry is one step: the files a station wrote before the job moved on
+            if e["event"] == "create":
+                reveal.append(plain("issue.md"))
+            elif old == "intake":
+                reveal.append(versioned("intake"))
+            elif old == "spec":
+                reveal.append(plain("spec.md"))
+            elif old == "build" and new == "gate":
+                reveal.append(plain("build.md"))
+            elif old == "gate":
+                reveal.append(plain(f"round-{last_round}/checks.md", f"round-{last_round}/checks.log"))
+            elif old == "review":
+                reveal += [[w] for w in plain(f"round-{last_round}/review-*")]
+            elif old == "needs-human" and new in {"build", "intake", "spec"}:
+                reveal.append(plain(f"feedback-{written.get('feedback', 0) + 1}.md"))
+                written["feedback"] = written.get("feedback", 0) + 1
+            if new == "rejected":
+                reveal.append(plain("rejection.md"))
+            if new == "merged":
+                reveal.append(plain(f"round-{rnd}/merge-checks.md", f"round-{rnd}/merge-checks.log"))
+            if new == "needs-human" or (new == "merging" and old in {"approve", "needs-human"}):
+                reveal.append(versioned("decision"))
+            if n == len(moves) - 1:  # whatever the rules above missed is there at the end
+                reveal.append(plain("*"))
+            reveal = [w for w in reveal if w]
+            for k, writes in enumerate(reveal):
+                if "intake.md" in {w[2] for w in writes}:
+                    state["intake"] = final.get("intake")
+                state["updated"] = iso(before + (at - before) * (k + 1) / (len(reveal) + 1))
+                add(stamp(state["updated"]), writes)
+            log_so_far.append(e)
+            if e["event"] == "advance":
+                state["stage"], state["round"] = new, rnd
+                if old == "intake" and new == "spec":
+                    state["agents"] = final.get("agents")
+                if old == "gate" and new == "review":
+                    state["gated_sha"] = final.get("gated_sha")
+                state["merged_sha"] = final.get("merged_sha") if new == "merged" else None
+                state["merge_failed"] = bool(final.get("merge_failed")) and n == len(moves) - 1
+                state["ended"] = e["at"] if new in STOPS else None
+            state["updated"] = e["at"]
+            state["cost_usd"] = round(float(final.get("cost_usd") or 0) * (n + 1) / len(moves), 2)
+            note = (f"{final['id']}: new, issue #{final['issue']}" if e["event"] == "create"
+                    else f"{final['id']}: {old} -> {new}" + (f" (round {rnd})" if rnd else ""))
+            add(at, [], note)
+            before = at
+    return sorted(steps, key=lambda s: s[0])
+
+
+def cmd_demo(ns):
+    run = saved_run(ns.run)
+    steps = replay_steps(run)
+    if not steps:
+        die(f"{run} has no event logs to replay")
+    shutil.rmtree(REPLAY, ignore_errors=True)
+    REPLAY.mkdir(parents=True)
+    token = f"{time.time():.3f}"
+
+    def clock(at, done=False):
+        tmp = REPLAY / "clock.tmp"
+        tmp.write_text(json.dumps({"now": iso(at), "run": token, "done": done}))
+        tmp.replace(REPLAY / "clock.json")
+
+    clock(steps[0][0])
+    port = dashboard()["port"]
+    url = f"http://127.0.0.1:{port}/dashboard.html?dir=replay"
+    try:
+        shown = run.relative_to(REPO).as_posix()
+    except ValueError:
+        shown = str(run)
+    print(f"Replaying {shown}: {len(steps)} steps. No agent runs and nothing is merged.")
+    print(f"dashboard     {url}")
+    if not ns.no_open:
+        open_url(url)
+    pause = 0 if ns.step else min(3.0, ns.seconds / len(steps))
+    if ns.step:
+        print("Press Enter for each step (Ctrl-C to stop).")
+    try:
+        for at, job_id, writes, state, note in steps:
+            if ns.step:
+                if not sys.stdin.readline():
+                    break  # nothing more to read: stop where the replay is
+            elif pause:
+                time.sleep(pause)
+            folder = REPLAY / job_id
+            folder.mkdir(exist_ok=True)
+            for what, *rest in writes:
+                if what == "copy":
+                    (folder / rest[1]).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(run / job_id / rest[0], folder / rest[1])
+                elif what == "rename" and (folder / rest[0]).exists():
+                    (folder / rest[0]).replace(folder / rest[1])
+                elif what == "events":
+                    (folder / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in rest[0]))
+            tmp = folder / "job.tmp"
+            tmp.write_text(json.dumps(state, indent=2) + "\n")
+            tmp.replace(folder / "job.json")
+            clock(at)
+            if note:
+                print(f"  {note}")
+        else:
+            clock(steps[-1][0], done=True)
+            print("\nThe replay is finished and stays on the dashboard. `./fx demo` plays it again;")
+            print("`./fx up` shows the live board, and `./fx run` runs the factory for real.")
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0
 
 
 # ---- issues and jobs -------------------------------------------------------
@@ -377,9 +585,27 @@ def decide(verb, args, what):
     if not text.strip():
         die("nothing written; nothing changed")
     code = subprocess.run(portable.script(JOB, verb, args[0]), cwd=REPO, input=text, text=True).returncode
-    if code == 0 and verb == "feedback":
+    if code == 0 and verb in {"feedback", "answer"}:
         print("Run ./fx run to put the factory back to work on it.")
     return code
+
+
+def cmd_new(args):
+    """File an issue: the title on the command line, the request after it,
+    from a pipe or from the editor. The issue is queued."""
+    title, rest = args[0], args[1:]
+    text = words(rest, f"What should be built? This is the request for: {title}")
+    if not text.strip():
+        die("nothing written; no issue filed")
+    res = subprocess.run(portable.script(JOB, "new-issue", title), cwd=REPO, input=text, text=True,
+                         capture_output=True)
+    if res.returncode:
+        print(res.stderr.strip(), file=sys.stderr)
+        return res.returncode
+    ref = res.stdout.strip()
+    print(f"issue {ref} filed and queued: {title}")
+    print(f"Run ./fx run {ref} to build it, or ./fx unqueue {ref} to hold it back.")
+    return 0
 
 
 def cmd_approve(args):
@@ -673,6 +899,8 @@ CONFIG_KEYS = {
     "concurrency": "how many jobs run at once (1 or more)",
     "max_rounds": "how often build, gate and review may repeat before a person decides (1 or more)",
     "merge_method": "merge, squash or rebase",
+    "auto_merge": "on: the factory merges what the approver approves; off: every merge waits for you",
+    "max_cost_usd": "a job that has cost more than this stops and waits for you; off for no limit",
     "review.low": "model of the code reviewer for low-risk changes: haiku, sonnet, opus",
     "review.medium": "the same for medium risk",
     "review.high": "the same for high risk",
@@ -685,10 +913,13 @@ def cmd_config(args):
         print(f"  tracker        {cfg.get('tracker', 'files')}")
         for key in ("concurrency", "max_rounds", "merge_method"):
             print(f"  {key:<14} {cfg[key]}")
+        print(f"  {'auto_merge':<14} {'on' if cfg.get('auto_merge', True) else 'off'}")
+        cap = cfg.get("max_cost_usd")
+        print(f"  {'max_cost_usd':<14} {f'{cap:g} per job' if cap else 'off'}")
         for risk, reviewers in cfg["routing"].items():
             print(f"  review.{risk:<7} " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
         for surface, reviewers in cfg["surface_reviewers"].items():
-            print(f"  touches {surface:<6} adds " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
+            print(f"  touches {surface:<8} adds " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
         print("\nChange one with ./fx config <key> <value>:")
         for key, what in CONFIG_KEYS.items():
             print(f"  {key:<14} {what}")
@@ -708,6 +939,23 @@ def cmd_config(args):
             die("merge_method must be merge, squash or rebase")
         new = re.sub(r'("merge_method":\s*")\w+(")', rf"\g<1>{value}\g<2>", text, count=1)
         cfg[key] = value
+    elif key == "auto_merge":
+        if value not in {"on", "off"}:
+            die("auto_merge must be on or off")
+        cfg[key] = value == "on"
+        new = re.sub(r'("auto_merge":\s*)(true|false)', rf"\g<1>{json.dumps(cfg[key])}", text, count=1)
+        value = json.dumps(cfg[key])
+    elif key == "max_cost_usd":
+        try:
+            cfg[key] = None if value == "off" else float(value)
+        except ValueError:
+            cfg[key] = -1
+        if cfg[key] is not None and not cfg[key] > 0:
+            die("max_cost_usd must be a number above 0, or off")
+        if cfg[key] is not None and cfg[key] == int(cfg[key]):
+            cfg[key] = int(cfg[key])
+        new = re.sub(r'("max_cost_usd":\s*)(null|[\d.]+)', rf"\g<1>{json.dumps(cfg[key])}", text, count=1)
+        value = json.dumps(cfg[key])
     else:
         risk = key.split(".", 1)[1]
         if value not in MODELS:
@@ -755,9 +1003,12 @@ EXAMPLES = """examples:
   fx up && fx run            the dashboard, then the factory
   fx queue 2 && fx run       queue issue 2, then run the factory
   fx config review.low sonnet
+  fx new "Show the base price" The average of all hours, as a tile.
+  fx answer 5 Yes, a block may set the price.
   fx show 1 && fx approve 1  look at a job that waits for you, then approve it
   fx feedback 1 use the same wording as the prices page
   fx reset --keep            start again, keeping your setup and a copy of this run
+  fx demo                    play that copy back on the dashboard, at no cost
 
 Run `fx <command> --help` for the details of one command."""
 
@@ -779,15 +1030,27 @@ COMMANDS = [
     ("deck", "open the presentation",
      "Opens docs/presentation.html in the browser. Show it before you start the\n"
      "dashboard with `fx up` and the factory with `fx run`."),
+    ("demo", "replay a saved run on the dashboard, without running any agent",
+     "Plays a finished run back on the dashboard, step by step: the jobs move along the\n"
+     "line, the files appear, a job stops for a person. It reads a run that\n"
+     "`fx reset --keep` saved under factory/runs/ (the last one, or the one you name) and\n"
+     "writes only to factory/replay/. No agent runs, nothing is merged, and it costs nothing."),
     ("run", "open Claude Code on /factory run",
      "Opens Claude Code in this folder and types `/factory run`, or `/factory run <issue>`\n"
      "for one issue. From there the session is yours to watch and approve."),
     ("issues", "list the issues: ref, state, labels, title", None),
+    ("new", "file a new issue and queue it",
+     "Files an issue with the title you give and queues it. Write the request after the\n"
+     "title, pipe it in, or leave it out to type it in your editor."),
     ("queue", "label an issue so the next run picks it up", None),
     ("unqueue", "remove that label from an issue", None),
     ("status", "show the jobs and what the next run would do", None),
     ("watch", "show job files as they are written (Ctrl-C to stop)", None),
     ("show", "a waiting job: the decision, the change, your options", None),
+    ("answer", "answer the question a job asked, so it can go on",
+     "For a job that waits in `needs-info`: your words are posted on the issue as the\n"
+     "answer. Write them after the job, pipe them in, or leave them out to type them in\n"
+     "your editor. Then run `fx run` so the factory picks the job up."),
     ("approve", "approve a waiting job; the factory re-checks and merges",
      "Shows the job, asks, then approves it. The factory syncs the branch with the base,\n"
      "runs the gate again and merges. Only a job whose tip is a commit the gate has\n"
@@ -826,12 +1089,18 @@ def build_parser():
         made[name] = sub.add_parser(name, help=short_help, description=long_help or short_help.capitalize() + ".",
                                     formatter_class=fmt)
     made["up"].add_argument("--no-open", action="store_true", help="start the dashboard without opening a browser")
+    made["demo"].add_argument("run", nargs="?", help="a folder under factory/runs/, or a path; default: the last saved run")
+    made["demo"].add_argument("--seconds", type=float, default=90, help="how long the whole replay takes (default 90)")
+    made["demo"].add_argument("--step", action="store_true", help="wait for Enter before each step")
+    made["demo"].add_argument("--no-open", action="store_true", help="don't open a browser")
     made["run"].add_argument("issue", nargs="?", help="run only this issue")
     made["queue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     made["unqueue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
-    for name in ("show", "approve", "feedback", "reject", "retry", "park"):
+    made["new"].add_argument("title", help="a short imperative title, in quotes")
+    made["new"].add_argument("words", nargs="*", help="the request; left out, it comes from stdin or your editor")
+    for name in ("show", "answer", "approve", "feedback", "reject", "retry", "park"):
         made[name].add_argument("job", help="a job id, or its issue's ref")
-    for name, what in (("feedback", "what should change"), ("reject", "why it is dropped"),
+    for name, what in (("answer", "your answer"), ("feedback", "what should change"), ("reject", "why it is dropped"),
                        ("park", "why it is stopped")):
         made[name].add_argument("words", nargs="*", help=f"{what}; left out, it comes from stdin or your editor")
     made["approve"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
@@ -858,6 +1127,8 @@ def dispatch(ns):
         return cmd_down()
     if cmd == "deck":
         return cmd_deck()
+    if cmd == "demo":
+        return cmd_demo(ns)
     if cmd == "run":
         return cmd_run([ns.issue] if ns.issue else [])
     if cmd == "issues":
@@ -874,6 +1145,10 @@ def dispatch(ns):
         return cmd_approve([ns.job] + (["--yes"] if ns.yes else []))
     if cmd == "retry":
         return job("merge", ns.job)
+    if cmd == "new":
+        return cmd_new([ns.title, *ns.words])
+    if cmd == "answer":
+        return decide("answer", [ns.job, *ns.words], "Your answer to the question. It is posted on the issue.")
     if cmd == "feedback":
         return decide("feedback", [ns.job, *ns.words], "What should change? Your words go to the builder.")
     if cmd == "reject":
