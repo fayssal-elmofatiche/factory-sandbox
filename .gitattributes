@@ -1,3 +1,5 @@
 # Shell and Python scripts break with CRLF line endings (Windows git, WSL).
 * text=auto eol=lf
+# cmd.exe wants CRLF.
+*.cmd text eol=crlf
 *.png binary

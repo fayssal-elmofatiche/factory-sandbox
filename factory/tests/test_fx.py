@@ -12,17 +12,35 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "factory" / "bin"))
+import portable  # noqa: E402
+
+SCRIPTS = {"fx", "job", "gate", "route", "guard"}
 GIT_ID = ["-c", "user.name=fx test", "-c", "user.email=fx@test.invalid"]
 
 
+def launch(cmd):
+    """The command line for one of the factory's scripts. Unix runs them by their
+    shebang line; Windows can't, so there Python and Git Bash start them."""
+    if not portable.WINDOWS:
+        return [str(c) for c in cmd]
+    name = Path(str(cmd[0])).name
+    if name.endswith(".sh"):
+        return [portable.bash(), *map(str, cmd)]
+    if name in SCRIPTS:
+        return [sys.executable, *map(str, cmd)]
+    return [str(c) for c in cmd]
+
+
 def run(cmd, cwd, check=True, stdin=None):
-    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, input=stdin)
+    res = subprocess.run(launch(cmd), cwd=cwd, capture_output=True, text=True, input=stdin)
     if check and res.returncode != 0:
         raise AssertionError(f"{cmd} failed ({res.returncode}):\n{res.stdout}\n{res.stderr}")
     return res

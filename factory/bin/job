@@ -41,17 +41,19 @@ Usage:
 <job> is a job id (004-dark-mode) or an issue ref (12 on GitHub or with files, a short id like 2f2b in kata).
 """
 
-import fcntl
 import fnmatch
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+import portable
 
 REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
@@ -253,10 +255,10 @@ class FilesTracker:
     def read(self, ref):
         path = self.path(ref)
         if not path.exists():
-            raise Refused(f"no issue {ref}: {path.relative_to(REPO)} doesn't exist")
+            raise Refused(f"no issue {ref}: {path.relative_to(REPO).as_posix()} doesn't exist")
         text = path.read_text()
         if not text.startswith("---\n") or "\n---\n" not in text[4:]:
-            raise Refused(f"{path.relative_to(REPO)} must start with a --- header block")
+            raise Refused(f"{path.relative_to(REPO).as_posix()} must start with a --- header block")
         head, _, rest = text[4:].partition("\n---\n")
         meta = {}
         for line in head.splitlines():
@@ -305,7 +307,7 @@ class FilesTracker:
             try:
                 out.append(self.read(p.stem))
             except Refused as e:
-                warn(f"skipping {p.relative_to(REPO)}: {e}")
+                warn(f"skipping {p.relative_to(REPO).as_posix()}: {e}")
         return out
 
     def whoami(self):
@@ -610,7 +612,7 @@ def lock():
     if _lock is None:
         JOBS.mkdir(parents=True, exist_ok=True)
         _lock = open(JOBS / ".lock", "w")
-        fcntl.flock(_lock, fcntl.LOCK_EX)
+        portable.lock(_lock)
 
 
 def load(job_id):
@@ -838,15 +840,19 @@ def cost_usd(job):
     its job across sessions. A model missing from the price table counts as
     zero: cost is a report, and a report must never stop a job.
     """
-    needle = f"Job folder: {job_dir(job['id'])}/"
+    def spelling(text):  # Windows prompts mix \ and /, and the drive letter's case may vary
+        text = text.replace("\\", "/")
+        return text.lower() if portable.WINDOWS else text
+
+    needle = spelling(f"Job folder: {job_dir(job['id'])}/")
     prices = CONFIG["prices_usd_per_mtok"]
     total = 0.0
     unpriced = set()
     for path in transcripts_dir().glob("*/subagents/agent-*.jsonl"):
         try:
-            with path.open() as f:
+            with path.open(encoding="utf-8") as f:
                 first = f.readline()
-                if not first or needle not in prompt_text(first):
+                if not first or needle not in spelling(prompt_text(first)):
                     continue
                 usage_by_message = {}
                 for line in f:
@@ -993,8 +999,31 @@ def ensure_worktree(job):
     job.setdefault("base_sha", run(["git", "rev-parse", f"origin/{BASE}"]).stdout.strip())
     setup = FACTORY / "worktree-setup.sh"
     if setup.exists():  # the project's own preparation: env files, test credentials, installs
-        res = subprocess.run(["bash", str(setup)], cwd=wt, capture_output=True, text=True)
+        res = subprocess.run([portable.bash(), str(setup)], cwd=wt, capture_output=True, text=True)
         require(res.returncode == 0, f"factory/worktree-setup.sh failed in {wt}: {(res.stderr or res.stdout).strip()}")
+
+
+def remove_worktree(job):
+    """Remove a finished job's worktree and branch. A failure here only warns:
+    the job's outcome is already decided, and cleanup must never stop the queue.
+
+    Windows refuses to delete a folder some process still has open, such as a
+    dev server an agent left running. Git may then have dropped the worktree
+    from its list while the folder stays, so try a few times, then prune and
+    delete what is left."""
+    wt = Path(job["worktree"])
+    require((REPO / ".worktrees") in wt.resolve().parents, f"{wt} is not inside .worktrees/")
+    for attempt in range(5):
+        if run(["git", "worktree", "remove", "--force", str(wt)], check=False).returncode == 0 or not wt.exists():
+            break
+        time.sleep(1 + attempt)
+    run(["git", "worktree", "prune"], check=False)
+    if wt.exists():
+        shutil.rmtree(wt, ignore_errors=True)
+    if wt.exists():
+        warn(f"could not remove {wt.relative_to(REPO).as_posix()}: something still uses it. "
+             "Delete the folder once it is free; the job is done either way")
+    run(["git", "branch", "-D", job["branch"]], check=False)
 
 
 def advance(job, stage, park=False):
@@ -1193,8 +1222,7 @@ def advance(job, stage, park=False):
         label(job["issue"], add=LABELS["needs_human"])
 
     if stage in TERMINAL and Path(job["worktree"]).exists():
-        run(["git", "worktree", "remove", "--force", job["worktree"]])
-        run(["git", "branch", "-D", job["branch"]], check=False)
+        remove_worktree(job)
 
     event(job, "advance", **{"from": old, "to": stage}, **({"parked": True} if park else {}))
     job["stage"] = stage
@@ -1360,7 +1388,7 @@ def cmd_merge(job):
             return fail(f"The branch conflicts with {BASE}:\n\n```\n{merged.stdout.strip()}\n```", retry=False)
         job["synced_sha"] = git(job, "rev-parse", "HEAD").stdout.strip()
         save(job)
-        gate = subprocess.run([str(BIN / "gate"), job["id"], "--merge"], capture_output=True, text=True)
+        gate = subprocess.run(portable.script(BIN / "gate", job["id"], "--merge"), capture_output=True, text=True)
         if gate.returncode != 0:
             return fail(f"The gate failed after syncing with {BASE}. "
                         f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}", retry=False)
