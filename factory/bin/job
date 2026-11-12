@@ -46,6 +46,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -839,15 +840,19 @@ def cost_usd(job):
     its job across sessions. A model missing from the price table counts as
     zero: cost is a report, and a report must never stop a job.
     """
-    needle = f"Job folder: {job_dir(job['id'])}/"
+    def spelling(text):  # Windows prompts mix \ and /, and the drive letter's case may vary
+        text = text.replace("\\", "/")
+        return text.lower() if portable.WINDOWS else text
+
+    needle = spelling(f"Job folder: {job_dir(job['id'])}/")
     prices = CONFIG["prices_usd_per_mtok"]
     total = 0.0
     unpriced = set()
     for path in transcripts_dir().glob("*/subagents/agent-*.jsonl"):
         try:
-            with path.open() as f:
+            with path.open(encoding="utf-8") as f:
                 first = f.readline()
-                if not first or needle not in prompt_text(first):
+                if not first or needle not in spelling(prompt_text(first)):
                     continue
                 usage_by_message = {}
                 for line in f:
@@ -996,6 +1001,29 @@ def ensure_worktree(job):
     if setup.exists():  # the project's own preparation: env files, test credentials, installs
         res = subprocess.run([portable.bash(), str(setup)], cwd=wt, capture_output=True, text=True)
         require(res.returncode == 0, f"factory/worktree-setup.sh failed in {wt}: {(res.stderr or res.stdout).strip()}")
+
+
+def remove_worktree(job):
+    """Remove a finished job's worktree and branch. A failure here only warns:
+    the job's outcome is already decided, and cleanup must never stop the queue.
+
+    Windows refuses to delete a folder some process still has open, such as a
+    dev server an agent left running. Git may then have dropped the worktree
+    from its list while the folder stays, so try a few times, then prune and
+    delete what is left."""
+    wt = Path(job["worktree"])
+    require((REPO / ".worktrees") in wt.resolve().parents, f"{wt} is not inside .worktrees/")
+    for attempt in range(5):
+        if run(["git", "worktree", "remove", "--force", str(wt)], check=False).returncode == 0 or not wt.exists():
+            break
+        time.sleep(1 + attempt)
+    run(["git", "worktree", "prune"], check=False)
+    if wt.exists():
+        shutil.rmtree(wt, ignore_errors=True)
+    if wt.exists():
+        warn(f"could not remove {wt.relative_to(REPO).as_posix()}: something still uses it. "
+             "Delete the folder once it is free; the job is done either way")
+    run(["git", "branch", "-D", job["branch"]], check=False)
 
 
 def advance(job, stage, park=False):
@@ -1194,8 +1222,7 @@ def advance(job, stage, park=False):
         label(job["issue"], add=LABELS["needs_human"])
 
     if stage in TERMINAL and Path(job["worktree"]).exists():
-        run(["git", "worktree", "remove", "--force", job["worktree"]])
-        run(["git", "branch", "-D", job["branch"]], check=False)
+        remove_worktree(job)
 
     event(job, "advance", **{"from": old, "to": stage}, **({"parked": True} if park else {}))
     job["stage"] = stage

@@ -371,17 +371,19 @@ def test_posts_have_credentials_removed(sb):
 # ---- M2: cost never stops a job ------------------------------------------------
 
 
-def transcript(sb, job_id, model):
+def transcript(sb, job_id, model, spell=str, note=""):
     import re
     project = re.sub(r"[^A-Za-z0-9]", "-", str(sb.repo.resolve()))
     d = sb.cfg / "projects" / project / "s1" / "subagents"
     d.mkdir(parents=True, exist_ok=True)
     folder = (sb.repo / "factory" / "jobs" / job_id).resolve()
     usage = {"input_tokens": 1_000_000, "output_tokens": 0}
+    prompt = f"Job: {job_id}. Job folder: {spell(folder)}/. M{note}"
     (d / f"agent-{model}.jsonl").write_text(
-        json.dumps({"type": "user", "message": {"content": f"Job: {job_id}. Job folder: {folder}/. M"}})
+        json.dumps({"type": "user", "message": {"content": prompt}}, ensure_ascii=False)
         + "\n"
-        + json.dumps({"type": "assistant", "message": {"id": "m1", "model": model, "usage": usage}}) + "\n")
+        + json.dumps({"type": "assistant", "message": {"id": "m1", "model": model, "usage": usage}}) + "\n",
+        encoding="utf-8")
 
 
 def test_cost_is_summed_and_an_unpriced_model_only_warns(sb):
@@ -395,6 +397,32 @@ def test_cost_is_summed_and_an_unpriced_model_only_warns(sb):
     s = sb.state(job_id)
     assert s["stage"] == "spec" and s["cost_usd"] == 4.0 and s["cost_incomplete"] == ["claude-opus-9-9"]
     assert "$4.00+" in sb.job("summary").stdout
+
+
+def test_cost_counts_a_prompt_that_spells_the_folder_with_forward_slashes(sb):
+    """On Windows the orchestrator mixes the slashes (C:/Users/x with backslashes, then
+    /factory/jobs/<id>/), and the transcripts hold text that isn't ASCII."""
+    job_id = sb.job("create", sb.issue()).stdout.strip()
+    transcript(sb, job_id, "claude-opus-5-5", spell=lambda f: f.as_posix(), note=" Café ✓")
+    sb.intake(job_id)
+    sb.route(job_id)
+    sb.job("advance", job_id, "spec")
+    assert sb.state(job_id)["cost_usd"] == 4.0
+
+
+def test_a_merged_job_survives_a_worktree_git_already_dropped(sb):
+    """Windows can refuse to delete a folder a process still has open. Git then
+    forgets the worktree but the folder stays; that must not stop the job or the queue."""
+    job_id = sb.to_review()
+    sh(["git", "merge", "-q", "--no-ff", "-m", "by hand", f"factory/{job_id}"], sb.repo)
+    sh(["git", "push", "-q", "origin", "main"], sb.repo)
+    wt = sb.wt(job_id)
+    sh(["git", "worktree", "remove", "--force", str(wt)], sb.repo)
+    (wt / "leftover").mkdir(parents=True)
+    sb.job("queue")
+    assert sb.state(job_id)["stage"] == "merged"
+    assert not wt.exists()
+    sb.job("queue")
 
 
 def test_a_budget_stops_an_expensive_job(sb):
