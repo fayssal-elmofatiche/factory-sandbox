@@ -33,6 +33,8 @@ def launch(cmd):
     if not portable.WINDOWS:
         return [str(c) for c in cmd]
     name = Path(str(cmd[0])).name
+    if name == "bash":  # a bare "bash" may be Windows' shortcut to WSL
+        return [portable.bash(), *map(str, cmd[1:])]
     if name.endswith(".sh"):
         return [portable.bash(), *map(str, cmd)]
     if name in SCRIPTS:
