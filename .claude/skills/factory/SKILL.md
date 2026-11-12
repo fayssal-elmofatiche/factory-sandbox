@@ -204,7 +204,8 @@ still running for it.
 
 1. Run `factory/bin/job queue`. Each line is `action  issue  job  stage  note`:
    `resume` (pick it up from its stage), `new` (no job yet), `hold` (no free
-   slot), `wait` (needs the author or you) or `skip`. The script enforces
+   slot), `wait` (needs the author or you, or is blocked by an open issue) or
+   `skip`. The script enforces
    `concurrency`: every job in a running stage holds a slot, and only as many
    `new` and replied `needs-info` lines as there are free slots come out as
    `new` or `resume`; the rest are `hold`. `job create` and the
@@ -251,7 +252,8 @@ new feature, ask.
   you may read a file in full when the answer is in it.
 - **What needs them**: run `factory/bin/job queue`. For each `wait` line, say
   what the job is waiting for: the question in `decision.md` for `needs-human`,
-  the question in `intake.md` for `needs-info`.
+  the question in `intake.md` for `needs-info`, and the issues named in the
+  note for a line that is `blocked by` others.
 - **What a job needs from them, in one screen**: `factory/bin/job show <n>`
   prints the stage, the decision, the diff stat and the commands that approve,
   send back or drop the job. Show it when they ask about one job.

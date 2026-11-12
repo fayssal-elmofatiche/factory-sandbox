@@ -243,7 +243,7 @@ to produce. A model decides at each step, so a run can differ.
 | # | Request | What should happen |
 |---|---------|--------------------|
 | 1 | Chart the day's hourly prices, with base and peak lines | Merges after UX, UI and security review |
-| 2 | A merit-order page per hour: supply and demand step chart, marginal order | Merges after a larger build, possibly in more than one round |
+| 2 | A merit-order page per hour: supply and demand step chart, marginal order | Waits until issue 1 merges (`blocked_by: 1`: both change the prices page), then merges after a larger build, possibly in more than one round |
 | 3 | A form to place and withdraw bids and offers | Built and reviewed, then the approver escalates: a new endpoint that changes orders, with no sign-in |
 | 4 | A CSV of accepted orders, with pro-rata fills at the clearing price | Built and reviewed, then the approver escalates: an export of per-participant data |
 | 5 | Block orders across several hours | Intake asks first: how blocks clear is a market-design decision |
@@ -292,6 +292,8 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   model no longer stops a job; an optional `factory/worktree-setup.sh` that
   prepares each job's worktree (env files, test credentials); tests in
   `factory/tests/`.
+- An issue file can name the issues it waits for (`blocked_by: 3, 4`);
+  `job queue` holds it, without a slot, until they are closed.
 - `fx` wraps the common commands, and `./fx setup` makes a clone its own
   sandbox; `factory/local-setup.sh` makes an extra copy.
 - Windows (November 2026): the factory runs natively on Windows as well as on

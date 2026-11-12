@@ -143,6 +143,7 @@ def kata_json(*args):
 #                 labels[{name}], comments[{author{login}, body, createdAt}]}
 #   queued()     open issues carrying the queue label, oldest first: [{number, title}]
 #   rows()       every issue: (ref, state, [labels], title)
+#   blockers(ref) the issues it waits for that are not closed: [(ref, why)]
 #   comment, label, close, create, whoami, edited_after_label
 # To add one (GitLab, Jira, ...), write a class with these methods and name it
 # in TRACKERS.
@@ -154,6 +155,7 @@ def kata_json(*args):
 #   title: Show the day's base and peak price on the prices page
 #   state: open
 #   labels: factory
+#   blocked_by: 3, 4          (optional: issues that must close first)
 #   author: ada
 #   created: 2026-11-12T09:00:00Z
 #   ---
@@ -220,14 +222,18 @@ class FilesTracker:
             "state": (meta.get("state") or "open").lower(), "author": author,
             "created": meta.get("created") or "",
             "labels": [x.strip() for x in meta.get("labels", "").split(",") if x.strip()],
+            "blocked_by": [x.strip().lstrip("#") for x in meta.get("blocked_by", "").split(",") if x.strip()],
             "body": rest[:heads[0].start()].strip() if heads else rest.strip(), "comments": comments,
         }
 
     def write(self, issue):
         title = " ".join(str(issue["title"]).split())
         lines = ["---", f"title: {title}", f"state: {issue['state']}",
-                 f"labels: {', '.join(issue['labels'])}", f"author: {issue['author']}",
-                 f"created: {issue['created']}", "---", "", defuse(issue["body"]), ""]
+                 f"labels: {', '.join(issue['labels'])}"]
+        if issue.get("blocked_by"):
+            lines.append(f"blocked_by: {', '.join(issue['blocked_by'])}")
+        lines += [f"author: {issue['author']}", f"created: {issue['created']}", "---", "",
+                  defuse(issue["body"]), ""]
         for c in issue["comments"]:
             lines += [f"<!-- comment by {c['author']} at {c['created']} -->", defuse(c["body"]), COMMENT_END, ""]
         ISSUES.mkdir(parents=True, exist_ok=True)
@@ -299,6 +305,20 @@ class FilesTracker:
     def edited_after_label(self, ref):
         return False  # the file belongs to the person running the factory
 
+    def blockers(self, ref):
+        """The issues in this one's `blocked_by` that are not closed yet, each
+        with why: [(ref, "open")] or [(ref, "doesn't exist")]."""
+        out = []
+        for b in self.read(ref)["blocked_by"]:
+            try:
+                state = self.read(b)["state"]
+            except Refused:
+                out.append((b, "doesn't exist"))
+                continue
+            if state != "closed":
+                out.append((b, state))
+        return out
+
 
 class KataTracker:
     source = "kata"
@@ -347,6 +367,9 @@ class KataTracker:
 
     def edited_after_label(self, ref):
         return False
+
+    def blockers(self, ref):
+        return []  # blocked_by is a files-tracker header; kata issues are never held
 
 
 # ---- Hosts: where code is merged -------------------------------------------
@@ -1128,10 +1151,18 @@ def slugify(title):
     return "-".join(words) or "issue"
 
 
+def blocked_note(ref):
+    """'blocked by #2 (open), #7 (doesn't exist)', or '' when nothing blocks it."""
+    held = TRACKER.blockers(ref)
+    return "blocked by " + ", ".join(f"#{b} ({why})" for b, why in held) if held else ""
+
+
 def cmd_create(number):
     existing = [j for j in all_jobs() if str(j["issue"]) == str(number)]
     if existing:
         die(f"issue #{number} already has job {existing[0]['id']} ({existing[0]['stage']})")
+    if note := blocked_note(number):
+        die(f"issue #{number} is {note}; it starts once those issues are closed")
     require_slot(None)
     issue = TRACKER.get(number)
     if issue["state"] != "OPEN":
@@ -1175,7 +1206,10 @@ def cmd_queue():
         n = issue["number"]
         j = jobs.get(n)
         if not j:
-            new_rows.append(("new", n, "-", "-", issue["title"]))
+            if note := blocked_note(n):
+                other_rows.append(("wait", n, "-", "-", note))
+            else:
+                new_rows.append(("new", n, "-", "-", issue["title"]))
         elif j["stage"] == "needs-info":
             if replied_since_question(TRACKER.get(n)):
                 replied_rows.append(("resume", n, j["id"], j["stage"], "author replied"))
