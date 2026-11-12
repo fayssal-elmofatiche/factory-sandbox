@@ -135,8 +135,8 @@ page or the public functions.
 - `factory/bin/job advance <job> build` refuses a spec without an
   `acceptance.py` that compiles, has test functions pytest collects and is
   clean under `ruff check`. It seals the file with the spec and runs it once
-  on the base branch as it is on `origin`, into `acceptance-base.md`; tests that already pass there
-  only draw a warning.
+  on the base branch as it is on `origin`, into `acceptance-base.md`; tests
+  that already pass there only draw a warning.
 - The builder can read the tests but not edit them (the guard), and the gate
   refuses to run when the file differs from the sealed copy. The gate runs them
   after `checks.sh`, hermetically: a copy in a fresh temporary folder, an empty
