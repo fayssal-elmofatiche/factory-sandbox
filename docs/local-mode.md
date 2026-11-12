@@ -159,6 +159,9 @@ machine, not part of the project.
   to three times. A merge that still fails waits in `needs-human`;
   `factory/bin/job merge <job>` retries it without a new round.
 - Your own checkout is never touched: run `git pull` in it to see what merged.
+- The first `./fx run` in a new sandbox shows Claude Code's trust prompt.
+  Accept it: until then Claude Code skips the hooks that keep each agent
+  inside its job. `./fx doctor` shows whether the folder is trusted.
 
 Everything else is unchanged: the stages, the gate, risk routing, the review
 rounds and the files in `factory/jobs/`. The dashboard works as before; job

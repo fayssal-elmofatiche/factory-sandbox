@@ -84,4 +84,6 @@ Non-blocking observations. Optional.
   skim on the dashboard. The detail goes in the sections below it.
 - Under Findings, write "None." when there are none.
 
-When you're done, reply with one line: the first line of review-security.md.
+Write review-security.md with the Write tool before you reply: the file is your review, and the factory
+reads only the file. A verdict in your reply with no file on disk counts as no review. Then
+reply with one line: the first line of review-security.md.

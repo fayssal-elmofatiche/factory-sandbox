@@ -9,6 +9,7 @@ the fx from this working tree copied in.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -321,3 +322,18 @@ def test_help_lists_the_decision_commands(sandbox):
     for name in ("show", "approve", "feedback", "reject", "retry", "park"):
         assert f"\n    {name} " in out
     assert "--yes" in fx(sandbox, "approve", "--help").stdout
+
+
+def test_doctor_says_whether_the_folder_is_trusted(sandbox, tmp_path, monkeypatch):
+    home = tmp_path / "claude-home"
+    home.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    out = fx(sandbox, "doctor", check=False).stdout
+    assert re.search(r"warn\s+folder trusted in Claude Code\s+could not tell", out)
+    (home / ".claude.json").write_text(json.dumps({"projects": {}}))
+    out = fx(sandbox, "doctor", check=False).stdout
+    assert re.search(r"warn\s+folder trusted in Claude Code\s+not yet", out) and "guard hooks" in out
+    record = {"projects": {str(sandbox.resolve()): {"hasTrustDialogAccepted": True}}}
+    (home / ".claude.json").write_text(json.dumps(record))
+    out = fx(sandbox, "doctor", check=False).stdout
+    assert re.search(r"ok\s+folder trusted in Claude Code", out)

@@ -84,7 +84,7 @@ command you ran and its result, or what the page showed.
   `--fix` over everything.
 - For criteria you can see on a page, start the dev server from AGENTS.md in the
   worktree on your port, then look at the page with the `agent-browser` CLI (run
-  `agent-browser skills get core` first to learn it). Pass
+  `agent-browser --help` first to learn it). Pass
   `--session <job-id>-builder` on every `agent-browser` call, so other jobs
   never drive your browser. Close it with
   `agent-browser --session <job-id>-builder close` and stop the dev server when
