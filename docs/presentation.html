@@ -153,7 +153,7 @@ a { color: var(--live); text-underline-offset: .18em; }
 #lamps button.done { background: var(--dead); }
 #lamps button.on { background: var(--live); outline: 2px solid var(--live); outline-offset: 3px; }
 #rail .hint { color: var(--muted); }
-#rail .go { border: 2px solid var(--ink); background: var(--plate); border-radius: 4px; padding: .25em .9em; }
+#rail .go { border: 2px solid var(--ink); background: var(--plate); border-radius: 4px; padding: .25em .9em; white-space: nowrap; }
 
 @media (max-width: 820px) {
   html, body { overflow: auto; }
@@ -162,7 +162,8 @@ a { color: var(--live); text-underline-offset: .18em; }
   #panel.bare { padding: 1rem; }
   .doc, .pair, .trio { grid-template-columns: 1fr; }
   #rail .hint, #lamps { display: none; }
-  #rail { justify-content: space-between; }
+  #rail { justify-content: space-between; gap: .5rem; padding: .7rem 16px; }
+  #count { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -176,6 +177,7 @@ a { color: var(--live); text-underline-offset: .18em; }
   <span id="count"></span>
   <div id="lamps"></div>
   <span class="hint">← → to move, D for dark, F for full screen</span>
+  <button class="go" id="full" aria-pressed="false" hidden>Full screen</button>
   <button class="go" id="prev" aria-label="Back">Back</button>
   <button class="go" id="next" aria-label="Next">Next</button>
 </nav>
@@ -706,6 +708,14 @@ function countUp(el) {
 
 SLIDES.forEach((s, i) => { const b = document.createElement('button'); b.title = s.name; b.setAttribute('aria-label', `Go to ${s.name}`); b.onclick = () => go(i); $('#lamps').append(b) })
 $('#next').onclick = next; $('#prev').onclick = prev
+function fullScreen() { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.() }
+$('#full').hidden = !document.fullscreenEnabled  // phones and embedded views that can't go full screen get no button
+$('#full').onclick = (e) => { fullScreen(); e.currentTarget.blur() }
+addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement
+  $('#full').textContent = on ? 'Exit full screen' : 'Full screen'
+  $('#full').setAttribute('aria-pressed', on)
+})
 
 // Keys on the plate, and stations on the board, drive the same state.
 function act(group, v) {
@@ -733,7 +743,7 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'Home') go(0)
   else if (e.key === 'End') go(SLIDES.length - 1)
   else if (e.key === 'd' || e.key === 'D') theme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark')
-  else if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()
+  else if (e.key === 'f' || e.key === 'F') fullScreen()
 })
 addEventListener('resize', () => { cam = null; fly(frameNow()) })
 function theme(t) { document.documentElement.dataset.theme = t; try { localStorage.setItem('factory-theme', t) } catch {} }
