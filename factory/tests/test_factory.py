@@ -501,9 +501,9 @@ def test_a_failed_merge_can_be_retried_and_keeps_the_approval(sb):
     hook.write_text("#!/bin/sh\nwhile read old new ref; do\n"
                     "[ \"$ref\" = refs/heads/main ] && exit 1\ndone\nexit 0\n")
     hook.chmod(0o755)
-    sb.job("merge", job_id, check=False)
+    res = sb.job("merge", job_id, check=False)
     s = sb.state(job_id)
-    assert s["stage"] == "needs-human" and s["merge_failed"]
+    assert s["stage"] == "needs-human" and s["merge_failed"], res.stdout + res.stderr
     assert (sb.dir(job_id) / s["approved_decision"]).read_text().startswith("APPROVE")
     assert "retry" in sb.job("queue").stdout
     hook.unlink()
