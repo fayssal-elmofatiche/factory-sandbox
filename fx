@@ -673,6 +673,7 @@ CONFIG_KEYS = {
     "concurrency": "how many jobs run at once (1 or more)",
     "max_rounds": "how often build, gate and review may repeat before a person decides (1 or more)",
     "merge_method": "merge, squash or rebase",
+    "max_cost_usd": "a job stops between steps once it costs more than this, in dollars; off for no cap",
     "review.low": "model of the code reviewer for low-risk changes: haiku, sonnet, opus",
     "review.medium": "the same for medium risk",
     "review.high": "the same for high risk",
@@ -685,6 +686,8 @@ def cmd_config(args):
         print(f"  tracker        {cfg.get('tracker', 'files')}")
         for key in ("concurrency", "max_rounds", "merge_method"):
             print(f"  {key:<14} {cfg[key]}")
+        cap = cfg.get("max_cost_usd")
+        print(f"  max_cost_usd   {f'${cap:.2f} per job' if cap else 'off'}")
         for risk, reviewers in cfg["routing"].items():
             print(f"  review.{risk:<7} " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
         for surface, reviewers in cfg["surface_reviewers"].items():
@@ -708,6 +711,18 @@ def cmd_config(args):
             die("merge_method must be merge, squash or rebase")
         new = re.sub(r'("merge_method":\s*")\w+(")', rf"\g<1>{value}\g<2>", text, count=1)
         cfg[key] = value
+    elif key == "max_cost_usd":
+        if value == "off":
+            cap = None
+        else:
+            try:
+                cap = float(value)
+            except ValueError:
+                cap = 0.0
+            if not cap > 0 or cap == float("inf"):
+                die("max_cost_usd must be a dollar amount above 0, or off")
+        new = re.sub(r'("max_cost_usd":\s*)[^,\n}]+', rf"\g<1>{json.dumps(cap)}", text, count=1)
+        cfg[key] = cap
     else:
         risk = key.split(".", 1)[1]
         if value not in MODELS:

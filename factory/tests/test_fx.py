@@ -185,8 +185,19 @@ def test_config_changes_one_setting_and_commits_it(sandbox):
     assert "already" in fx(sandbox, "config", "concurrency", "1").stdout
 
 
+def test_config_sets_and_clears_the_cost_cap(sandbox):
+    assert "max_cost_usd" in fx(sandbox, "config").stdout
+    fx(sandbox, "config", "max_cost_usd", "2.5")
+    assert cfg(sandbox)["max_cost_usd"] == 2.5
+    assert "Set max_cost_usd to 2.5" in run(["git", "log", "-1", "--format=%s"], cwd=sandbox).stdout
+    fx(sandbox, "config", "max_cost_usd", "off")
+    assert cfg(sandbox)["max_cost_usd"] is None
+    assert "max_cost_usd" in fx(sandbox, "config").stdout
+
+
 @pytest.mark.parametrize("args", [("concurrency", "0"), ("concurrency", "many"), ("merge_method", "yolo"),
-                                  ("review.low", "gpt"), ("nonsense", "1"), ("concurrency",)])
+                                  ("review.low", "gpt"), ("nonsense", "1"), ("concurrency",),
+                                  ("max_cost_usd", "0"), ("max_cost_usd", "-1"), ("max_cost_usd", "lots")])
 def test_config_refuses_bad_input(sandbox, args):
     before = (sandbox / "factory" / "config.json").read_text()
     assert fx(sandbox, "config", *args, check=False).returncode != 0

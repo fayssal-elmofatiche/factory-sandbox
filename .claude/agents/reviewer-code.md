@@ -60,6 +60,12 @@ rewrites files, such as `--fix`.
   existing test was weakened, deleted, skipped or special-cased to pass. Check
   `git diff <base>...HEAD --stat -- tests/` for removed lines and read every
   removed assertion.
+- **Redundant tests**: no new test only repeats what an existing test already
+  asserts, tests the framework or a mock rather than the behaviour, or pins an
+  implementation detail the spec doesn't ask for. Coding agents add these
+  often, and each one makes the suite slower and harder to change. Usually a
+  Note; CHANGES only when they clearly bloat the suite (several near-copies,
+  or a test that would break on any refactor).
 - **Commits**: short one-line messages and nothing stray committed. Trailers
   and attribution (`Co-Authored-By` and the like) are the builder's, not
   yours: the builder runs on a different model than you, so never compare
@@ -81,8 +87,8 @@ Non-blocking observations. Optional.
 ```
 
 - The first line must be exactly `VERDICT: PASS` or `VERDICT: CHANGES`.
-- Use CHANGES only for bugs, spec gaps, weakened tests or clear convention
-  breaks in the code. Put style preferences, process nitpicks and anything
+- Use CHANGES only for bugs, spec gaps, weakened tests, clearly redundant
+  tests or clear convention breaks in the code. Put style preferences, process nitpicks and anything
   that doesn't change how the code behaves or reads under Notes.
 - `## Summary` comes right after the header: 3 to 5 short bullets a human can
   skim on the dashboard. The detail goes in the sections below it.

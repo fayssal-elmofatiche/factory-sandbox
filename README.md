@@ -170,6 +170,14 @@ changes, the state of the issues) is discarded. The setup (`factory/config.json`
 `factory/checks.sh`, `.claude/` and `AGENTS.md`) is kept and becomes part of
 the new starting point. It lists what it will delete and asks before it does.
 
+Each job has a cost cap, `max_cost_usd` in `factory/config.json`, $5 to start
+with (the first real job cost $1.11). `factory/bin/job` checks it whenever a
+job moves to its next step and refuses to move a job that has gone over; the
+orchestrator then parks it for you to decide. A step that has started always
+finishes, so a job can end up one step over the cap. To show the cap in a demo, lower it with
+`./fx config max_cost_usd 0.5` and run a job. `./fx config max_cost_usd off`
+removes it.
+
 ## Running it
 
 Label an issue `factory` (`./fx queue <issue>`), then:
