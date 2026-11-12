@@ -99,7 +99,7 @@ def merge_a_job(box, issue="1"):
 
 # ---- help and errors -------------------------------------------------------
 
-COMMANDS = ["doctor", "up", "down", "deck", "run", "issues", "queue", "unqueue",
+COMMANDS = ["doctor", "up", "down", "deck", "run", "sweep", "issues", "queue", "unqueue",
             "status", "watch", "retro", "config", "baseline", "reset"]
 
 
@@ -129,11 +129,11 @@ def test_output_cut_short_by_a_pipe_leaves_no_traceback():
 
 
 def test_queue_and_unqueue_change_what_the_next_run_does(sandbox):
-    assert "new\t2\t" not in fx(sandbox, "status").stdout
-    fx(sandbox, "queue", "2")
-    assert "new\t2\t" in fx(sandbox, "status").stdout
-    fx(sandbox, "unqueue", "2")
-    assert "new\t2\t" not in fx(sandbox, "status").stdout
+    assert "new\t3\t" not in fx(sandbox, "status").stdout
+    fx(sandbox, "queue", "3")
+    assert "new\t3\t" in fx(sandbox, "status").stdout
+    fx(sandbox, "unqueue", "3")
+    assert "new\t3\t" not in fx(sandbox, "status").stdout
     assert fx(sandbox, "queue", "99", check=False).returncode != 0
 
 

@@ -134,6 +134,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx down` | Stops the dashboard |
 | `./fx deck` | Opens the presentation; show it before `./fx up` and `./fx run` |
 | `./fx run [issue]` | Opens Claude Code on `/factory run` |
+| `./fx sweep <kind>` | Opens Claude Code on `/factory sweep`: proposes `perf`, `security`, `cleanup` or `docs` work as unlabelled issues |
 | `./fx issues` | Lists the issues |
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
 | `./fx unqueue <issue>` | Takes that label off again |
@@ -292,6 +293,10 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   model no longer stops a job; an optional `factory/worktree-setup.sh` that
   prepares each job's worktree (env files, test credentials); tests in
   `factory/tests/`.
+- Sweeps: `./fx sweep <kind>` reads the base branch and files at most
+  `sweep.max_issues` findings as issues without the `factory` label, skipping
+  any that match an open issue (`job propose`). Nothing a sweep files runs
+  until a person queues it. Scheduling sweeps is not built yet.
 - An issue file can name the issues it waits for (`blocked_by: 3, 4`);
   `job queue` holds it, without a slot, until they are closed.
 - `fx` wraps the common commands, and `./fx setup` makes a clone its own
