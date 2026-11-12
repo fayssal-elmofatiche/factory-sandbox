@@ -837,6 +837,19 @@ def test_show_prints_the_decision_and_what_to_do(sb):
     assert f"factory/bin/job feedback {job_id}" in out and "dayahead/seed.py" in out
 
 
+def test_show_prints_the_builders_summary_and_risk(sb):
+    job_id = sb.to_review()
+    (sb.dir(job_id) / "build.md").write_text(
+        "STATUS: READY\n\n# Build: x\n\n## Summary\n- adds a seed row\n\n"
+        "## Changes\nnot shown\n\n"
+        "## Risk and impact\n- intake said low; still low\n- no interface changes\n\n"
+        "## Log\nnot shown either\n")
+    out = sb.job("show", job_id).stdout
+    assert "build.md: STATUS: READY" in out
+    assert "    - adds a seed row" in out and "    - intake said low; still low" in out
+    assert "Risk and impact:" in out and "not shown" not in out
+
+
 def test_local_setup_makes_a_working_sandbox(tmp_path):
     target = tmp_path / "demo"
     out = sh(["bash", str(ROOT / "factory" / "local-setup.sh"), str(target)], ROOT).stdout
