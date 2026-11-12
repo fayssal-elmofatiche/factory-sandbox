@@ -1491,3 +1491,16 @@ def test_a_job_sealed_before_acceptance_tests_existed_still_merges(sb):
     sb.decide(job_id)
     sb.job("merge", job_id)
     assert sb.state(job_id)["stage"] == "merged"
+
+
+def test_the_base_run_after_respec_runs_on_the_base_not_the_builders_branch(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    gate_after(sb, job_id, text="THING = 1\n")
+    sb.job("park", job_id, stdin="tests wrong")
+    sb.job("feedback", job_id, "--spec", stdin="tests wrong")
+    sb.spec(job_id, NEEDS_THING)
+    sb.job("advance", job_id, "build")
+    base = (sb.dir(job_id) / "acceptance-base.md").read_text()
+    assert base.startswith("ACCEPTANCE ON BASE: 0 passed, 1 failed"), base
+    main = sh(["git", "rev-parse", "origin/main"], sb.repo).stdout.strip()
+    assert main[:7] in base

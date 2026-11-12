@@ -42,12 +42,15 @@ Usage:
 
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -951,19 +954,28 @@ def remove_worktree(job):
 
 
 def run_acceptance_on_base(job):
-    """Run the accepted acceptance tests once, before any code is written, and
-    record how they did. Tests that already pass test nothing new: that is
-    worth a warning, not a refusal."""
+    """Run the accepted acceptance tests once on origin/<base>, before any code
+    for them is written, and record how they did. Tests that already pass test
+    nothing new: that is worth a warning, not a refusal. Never the job's
+    worktree: after `job feedback --spec` it holds the earlier build."""
     d = job_dir(job["id"])
-    commit = head_of(job) or "?"
-    code, out, seconds = acceptance.run(job["worktree"], d / acceptance.NAME, CONFIG.get("gate_timeout_seconds", 1800))
+    run(["git", "fetch", "origin", BASE])
+    commit = run(["git", "rev-parse", f"origin/{BASE}"]).stdout.strip()
+    tar = subprocess.run(["git", "archive", "--format=tar", commit], cwd=REPO, capture_output=True)
+    require(tar.returncode == 0, f"`git archive {commit[:7]}` failed: {tar.stderr.decode(errors='replace').strip()}")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as base:
+        with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
+            # The "data" filter refuses links and paths that leave the folder (Python 3.12, backported).
+            archive.extractall(base, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+        code, out, seconds = acceptance.run(base, d / acceptance.NAME, CONFIG.get("gate_timeout_seconds", 1800))
     passed, failed = acceptance.counts(out)
     tail = "\n".join(out.rstrip().splitlines()[-40:])
     (d / "acceptance-base.md").write_text(
         f"ACCEPTANCE ON BASE: {passed} passed, {failed} failed\n\n"
-        f"The spec writer's {acceptance.NAME}, run on {commit[:7]} before the build, exit {code} in {seconds}s. "
+        f"The spec writer's {acceptance.NAME}, run on {commit[:7]} (origin/{BASE}) before the build, "
+        f"exit {code} in {seconds}s. "
         f"Tests that pass here already don't test anything new.\n\n```\n{tail}\n```\n")
-    event(job, "acceptance-base", passed=passed, failed=failed, exit=code)
+    event(job, "acceptance-base", commit=commit, passed=passed, failed=failed, exit=code)
     if code == 0:
         warn(f"every acceptance test already passes on {commit[:7]}, before any code is written: "
              f"they don't test anything new. See factory/jobs/{job['id']}/acceptance-base.md")
