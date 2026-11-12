@@ -101,7 +101,16 @@
     transition: background .15s, border-color .15s, transform .15s;
   }
   .card:hover { background: var(--card-hover); transform: translateY(-1px); }
-  .card:focus-visible { outline: 2px solid var(--active); outline-offset: 2px; }
+  /* The title is the card's button; the whole card shows its focus. */
+  .card .open {
+    display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit;
+    font: inherit; text-align: left; cursor: pointer;
+  }
+  .card .open:focus-visible { outline: 2px solid var(--active); outline-offset: 2px; border-radius: 2px; }
+  @supports selector(:has(a)) {
+    .card:has(.open:focus-visible) { outline: 2px solid var(--active); outline-offset: 2px; }
+    .card .open:focus-visible { outline: none; }
+  }
   .card.live { border-color: color-mix(in srgb, var(--active) 35%, var(--line)); }
   .card.human {
     border-color: var(--human);
@@ -122,7 +131,7 @@
     margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .06em;
     text-transform: uppercase; color: var(--human); white-space: nowrap;
   }
-  .feature { font-size: 13px; line-height: 1.4; margin: 0 0 6px; }
+  .feature { font-size: 13px; font-weight: 400; line-height: 1.4; margin: 0 0 6px; }
   .links { display: flex; gap: 10px; font-family: var(--mono); font-size: 11px; }
   .links a { color: var(--active); text-decoration: none; }
   .links a:hover { text-decoration: underline; }
@@ -196,7 +205,7 @@
   .open .drawer { transform: none; }
   .d-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); position: relative; }
   .d-head .num { font-size: 12px; }
-  .d-head h3 { margin: 4px 40px 6px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+  .d-head h2 { margin: 4px 40px 6px 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
   .close {
     position: absolute; top: 16px; right: 16px; width: 32px; height: 32px;
     border-radius: 8px; border: 1px solid var(--line); background: none; cursor: pointer;
@@ -330,12 +339,12 @@
   <span id="totals"></span>
 </footer>
 
-<div id="overlay">
+<div id="overlay" inert aria-hidden="true">
   <div class="scrim" data-close></div>
   <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title">
     <div class="d-head">
       <div class="num" id="d-num"></div>
-      <h3 id="d-title"></h3>
+      <h2 id="d-title">Job</h2>
       <div class="links" id="d-links"></div>
       <div class="moves" id="d-moves" hidden></div>
       <button class="close" data-close aria-label="Close">×</button>
@@ -460,6 +469,7 @@ function card(job, rounds) {
   const flag = human ? '<span class="flag">your call</span>'
     : job.stage === 'needs-info' ? '<span class="flag wait">asked author</span>'
     : job.stage === 'rejected' ? '<span class="flag wait">rejected</span>' : ''
+  const state = human ? 'your call' : job.stage === 'needs-info' ? 'asked the author' : job.stage
   const risk = job.intake?.risk
   const meta = [
     risk ? `<span class="risk-${esc(risk)}">${esc(risk)}</span>` : '',
@@ -469,13 +479,13 @@ function card(job, rounds) {
   ].join('')
   return `
     <article class="card ${live ? 'live' : ''} ${human ? 'human' : ''} ${done ? 'done' : ''} ${job.stage}"
-             data-job="${esc(job.id)}" tabindex="0">
+             data-job="${esc(job.id)}">
       <div class="card-top">
-        ${live ? '<span class="pulse" aria-label="running"></span>' : ''}
+        ${live ? '<span class="pulse" role="img" aria-label="running"></span>' : ''}
         <span class="num">${esc(num)} · ${esc(slug.join('-'))}</span>
         ${flag}
       </div>
-      <p class="feature">${esc(job.title)}</p>
+      <h3 class="feature"><button class="open" aria-label="${esc(`${num} ${job.title}, ${state}`)}">${esc(job.title)}</button></h3>
       <div class="links">${links(job)}</div>
       ${rounds.length ? `<div class="rounds">${rounds.join('')}</div>` : ''}
       <div class="meta">${meta}</div>
@@ -872,8 +882,18 @@ async function refreshDrawer() {
   }
 }
 
-async function openDrawer(id) {
+// What had focus before the drawer opened, so closing it goes back there.
+let opener = null
+const PAGE = () => [...document.body.children].filter((el) => el.id !== 'overlay' && el.id !== 'announce' && el.tagName !== 'SCRIPT')
+
+async function openDrawer(id, from) {
   openJobId = id
+  opener = from ? { el: from, area: from.closest('#needs') ? '#needs' : '#board' } : null
+  const overlay = $('overlay')
+  overlay.inert = false
+  overlay.removeAttribute('aria-hidden')
+  for (const el of PAGE()) el.inert = true
+  overlay.querySelector('.close').focus()
   // A waiting job opens on the file that says what it waits for.
   const stage = jobs.find((j) => j.id === id)?.stage
   openPath = stage === 'needs-human' ? 'decision.md' : stage === 'needs-info' ? 'intake.md' : null
@@ -887,8 +907,20 @@ async function openDrawer(id) {
 }
 
 function closeDrawer() {
+  if (!openJobId) return
+  const id = openJobId
   openJobId = null
   document.body.classList.remove('open')
+  const overlay = $('overlay')
+  overlay.inert = true
+  overlay.setAttribute('aria-hidden', 'true')
+  for (const el of PAGE()) el.inert = false
+  // The board may have been redrawn while the drawer was open: find the job's control again.
+  let back = opener?.el
+  if (!back?.isConnected && opener) back = document.querySelector(`${opener.area} [data-job="${CSS.escape(id)}"]`)
+  back = back?.matches('.card') ? back.querySelector('.open') : back
+  back?.focus()
+  opener = null
 }
 
 document.addEventListener('click', (e) => {
@@ -896,7 +928,7 @@ document.addEventListener('click', (e) => {
   const copyEl = e.target.closest('[data-copy]')
   if (copyEl) return copyText(copyEl)
   const cardEl = e.target.closest('[data-job]')
-  if (cardEl) return openDrawer(cardEl.dataset.job)
+  if (cardEl) return openDrawer(cardEl.dataset.job, e.target.closest('button') || cardEl)
   const fileEl = e.target.closest('[data-file]')
   if (fileEl) {
     openPath = fileEl.dataset.file
@@ -906,11 +938,9 @@ document.addEventListener('click', (e) => {
   }
   if (e.target.closest('[data-close]')) closeDrawer()
 })
+// A card opens from its title button, so Enter and Space work as on any button.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') return closeDrawer()
-  if (e.target.closest?.('a')) return  // Enter on a link follows the link
-  const cardEl = e.target.closest?.('[data-job]')
-  if (cardEl && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDrawer(cardEl.dataset.job) }
+  if (e.key === 'Escape') closeDrawer()
 })
 
 // ---- Markdown (just enough for the factory's files) ---------------------
