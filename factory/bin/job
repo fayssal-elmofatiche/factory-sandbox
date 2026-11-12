@@ -41,7 +41,6 @@ Usage:
 <job> is a job id (004-dark-mode) or an issue ref (12 on GitHub or with files, a short id like 2f2b in kata).
 """
 
-import fcntl
 import fnmatch
 import hashlib
 import json
@@ -52,6 +51,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+import portable
 
 REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
@@ -610,7 +611,7 @@ def lock():
     if _lock is None:
         JOBS.mkdir(parents=True, exist_ok=True)
         _lock = open(JOBS / ".lock", "w")
-        fcntl.flock(_lock, fcntl.LOCK_EX)
+        portable.lock(_lock)
 
 
 def load(job_id):
@@ -993,7 +994,7 @@ def ensure_worktree(job):
     job.setdefault("base_sha", run(["git", "rev-parse", f"origin/{BASE}"]).stdout.strip())
     setup = FACTORY / "worktree-setup.sh"
     if setup.exists():  # the project's own preparation: env files, test credentials, installs
-        res = subprocess.run(["bash", str(setup)], cwd=wt, capture_output=True, text=True)
+        res = subprocess.run([portable.bash(), str(setup)], cwd=wt, capture_output=True, text=True)
         require(res.returncode == 0, f"factory/worktree-setup.sh failed in {wt}: {(res.stderr or res.stdout).strip()}")
 
 
@@ -1360,7 +1361,7 @@ def cmd_merge(job):
             return fail(f"The branch conflicts with {BASE}:\n\n```\n{merged.stdout.strip()}\n```", retry=False)
         job["synced_sha"] = git(job, "rev-parse", "HEAD").stdout.strip()
         save(job)
-        gate = subprocess.run([str(BIN / "gate"), job["id"], "--merge"], capture_output=True, text=True)
+        gate = subprocess.run(portable.script(BIN / "gate", job["id"], "--merge"), capture_output=True, text=True)
         if gate.returncode != 0:
             return fail(f"The gate failed after syncing with {BASE}. "
                         f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}", retry=False)

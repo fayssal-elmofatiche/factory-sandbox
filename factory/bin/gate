@@ -24,12 +24,12 @@ also matches `/`):
 
 import fnmatch
 import json
-import os
-import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import portable
 
 REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
@@ -72,13 +72,13 @@ def protected_changes(worktree):
 def run_checks(worktree):
     """Run checks.sh with a time limit. A run that hangs fails with exit 124."""
     start = time.monotonic()
-    proc = subprocess.Popen(["bash", str(CHECKS)], cwd=worktree, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    proc = subprocess.Popen([portable.bash(), str(CHECKS)], cwd=worktree, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, **portable.own_group())
     try:
         out, _ = proc.communicate(timeout=TIMEOUT)
         code = proc.returncode
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        portable.stop_group(proc.pid)
         out, _ = proc.communicate()
         out += f"\nfactory/checks.sh did not finish in {TIMEOUT}s (gate_timeout_seconds in config.json); stopped.\n"
         code = 124

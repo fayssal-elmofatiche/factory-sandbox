@@ -13,17 +13,35 @@ tests cover the state machine, the gate and the trackers, never a model.
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "factory" / "bin"))
+import portable  # noqa: E402
+
+SCRIPTS = {"fx", "job", "gate", "route", "guard"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
 
+def launch(cmd):
+    """The command line for one of the factory's scripts. Unix runs them by their
+    shebang line; Windows can't, so there Python and Git Bash start them."""
+    if not portable.WINDOWS:
+        return [str(c) for c in cmd]
+    name = Path(str(cmd[0])).name
+    if name.endswith(".sh"):
+        return [portable.bash(), *map(str, cmd)]
+    if name in SCRIPTS:
+        return [sys.executable, *map(str, cmd)]
+    return [str(c) for c in cmd]
+
+
 def sh(cmd, cwd, check=True, stdin=None):
-    res = subprocess.run(cmd, cwd=cwd, env=ENV, capture_output=True, text=True, input=stdin)
+    res = subprocess.run(launch(cmd), cwd=cwd, env=ENV, capture_output=True, text=True, input=stdin)
     if check:
         assert res.returncode == 0, f"{' '.join(map(str, cmd))}\n{res.stdout}\n{res.stderr}"
     return res
@@ -380,7 +398,7 @@ def test_a_budget_stops_an_expensive_job(sb):
 
 def test_jobs_created_at_once_get_different_numbers(sb):
     refs = [sb.issue(title=f"Thing {n}") for n in range(3)]
-    procs = [subprocess.Popen([str(sb.repo / "factory/bin/job"), "create", r], cwd=sb.repo, env=ENV,
+    procs = [subprocess.Popen(launch([sb.repo / "factory/bin/job", "create", r]), cwd=sb.repo, env=ENV,
                               stdout=subprocess.PIPE, text=True) for r in refs]
     ids = sorted(p.communicate()[0].strip() for p in procs)
     assert [i[:3] for i in ids] == ["001", "002", "003"]
@@ -397,7 +415,7 @@ def test_two_merges_at_once_both_land(sb):
     sb.review(b)
     sb.job("advance", b, "approve")
     sb.decide(b)
-    procs = [subprocess.Popen([str(sb.repo / "factory/bin/job"), "merge", j], cwd=sb.repo, env=ENV,
+    procs = [subprocess.Popen(launch([sb.repo / "factory/bin/job", "merge", j]), cwd=sb.repo, env=ENV,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for j in (a, b)]
     for p in procs:
         p.communicate()
@@ -645,7 +663,7 @@ def test_a_reply_typed_by_hand_is_seen(sb):
 
 def test_issues_filed_at_once_are_all_kept(sb):
     job = str(sb.repo / "factory/bin/job")
-    procs = [subprocess.Popen([job, "new-issue", f"Thing {n}"], cwd=sb.repo, env=ENV,
+    procs = [subprocess.Popen(launch([job, "new-issue", f"Thing {n}"]), cwd=sb.repo, env=ENV,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) for n in range(4)]
     refs = sorted(p.communicate("body")[0].strip() for p in procs)
     assert refs == ["1", "2", "3", "4"]

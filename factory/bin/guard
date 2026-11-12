@@ -50,7 +50,7 @@ NOT_BUILDER = [
     (r"\bgit\s+(commit|push|merge|rebase|reset|revert|cherry-pick|am|apply|stash|checkout|switch|restore|rm|mv|clean|tag|branch\s+-[dDmM])\b",
      "only the builder changes the branch; you read it"),
 ]
-JOB_SCRIPT = re.compile(r"factory/bin/(job|route)\b")
+JOB_SCRIPT = re.compile(r"factory/bin/(job|route)\b", re.IGNORECASE)
 
 
 def deny(why):
@@ -82,13 +82,15 @@ def main(argv):
              + (" and code inside the job's worktree" if role == "builder" else "") + f", not {rel}")
 
     if tool == "Bash":
-        command = args.get("command") or ""
+        # Windows reaches the same files as factory\bin\job or Factory/Bin/Job, so match
+        # with forward slashes and ignore case. On Linux this only ever blocks more.
+        command = (args.get("command") or "").replace("\\", "/")
         for m in JOB_SCRIPT.finditer(command):
             rest = command[m.end():].lstrip()
-            if not (role == "builder" and m.group(1) == "job" and rest.startswith("open-change")):
+            if not (role == "builder" and m.group(1).lower() == "job" and rest.startswith("open-change")):
                 deny("the orchestrator runs factory/bin/job and factory/bin/route; agents don't move job state")
         for pattern, why in ALWAYS + ([] if role == "builder" else NOT_BUILDER):
-            if re.search(pattern, command):
+            if re.search(pattern, command, re.IGNORECASE):
                 deny(why)
 
 

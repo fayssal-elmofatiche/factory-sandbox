@@ -23,6 +23,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 FACTORY = REPO / "factory"
+sys.path.insert(0, str(FACTORY / "bin"))
+import portable  # noqa: E402  (lives next to the factory's scripts)
+
 JOB = FACTORY / "bin" / "job"
 DECK = REPO / "docs" / "presentation.html"
 TAG = "demo-start"  # the starting point `fx reset` returns to; moves when the setup changes
@@ -66,7 +69,7 @@ def state_dir():
 
 def job(*args):
     """Run factory/bin/job and pass its output and exit code through."""
-    return subprocess.run([str(JOB), *args], cwd=REPO).returncode
+    return subprocess.run(portable.script(JOB, *args), cwd=REPO).returncode
 
 
 # ---- doctor ----------------------------------------------------------------
@@ -117,7 +120,7 @@ def cmd_doctor():
                       ("lsof", "used to stop a job's dev server")):
         rows.append(("ok" if have(tool) else "warn", tool, "" if have(tool) else why))
 
-    checks = sh("bash", str(FACTORY / "checks.sh"))
+    checks = sh(portable.bash(), str(FACTORY / "checks.sh"))
     tail = (checks.stdout or checks.stderr).strip().splitlines()
     rows.append(("ok" if checks.returncode == 0 else "MISSING", "factory/checks.sh passes",
                  tail[-1] if tail else ""))
@@ -142,7 +145,8 @@ def dashboard_state():
         return None
     try:
         st = json.loads(path.read_text())
-        os.kill(st["pid"], 0)  # raises if the process is gone
+        if not portable.alive(st["pid"]):
+            raise ValueError("the dashboard is gone")
         return st
     except (ValueError, KeyError, OSError):
         path.unlink(missing_ok=True)
@@ -162,7 +166,7 @@ def free_port(start=8765):
 
 def open_url(url):
     """Open a URL in the browser; under WSL, hand it to Windows."""
-    if "microsoft" in os.uname().release.lower():
+    if portable.wsl():
         for tool in ("wslview", "explorer.exe"):
             if shutil.which(tool):
                 subprocess.run([tool, url], capture_output=True)
@@ -174,7 +178,7 @@ def open_url(url):
 
 
 def deck_url():
-    if "microsoft" in os.uname().release.lower() and shutil.which("wslpath"):
+    if portable.wsl() and shutil.which("wslpath"):
         win = sh("wslpath", "-w", str(DECK)).stdout.strip()
         if win:
             return win
@@ -188,7 +192,7 @@ def cmd_up(args):
         log = open(state_dir() / "dashboard.log", "w")
         proc = subprocess.Popen(
             [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
-            cwd=FACTORY, stdout=log, stderr=log, start_new_session=True)
+            cwd=FACTORY, stdout=log, stderr=log, **portable.own_group())
         st = {"pid": proc.pid, "port": port}
         (state_dir() / "dashboard.json").write_text(json.dumps(st))
         time.sleep(0.4)
@@ -212,10 +216,7 @@ def cmd_down():
     if not st:
         print("the dashboard is not running")
         return 0
-    try:
-        os.kill(st["pid"], signal.SIGTERM)
-    except OSError:
-        pass
+    portable.stop(st["pid"])
     (state_dir() / "dashboard.json").unlink(missing_ok=True)
     print(f"dashboard on port {st['port']} stopped")
     return 0
@@ -235,6 +236,8 @@ def cmd_run(args):
     prompt = "/factory run" + (f" {args[0]}" if args else "")
     print(f"Starting Claude Code in {REPO} with: {prompt}")
     os.chdir(REPO)
+    if portable.WINDOWS:  # Windows has no exec: run Claude Code and pass its exit code on
+        return subprocess.run([shutil.which("claude"), prompt]).returncode
     os.execvp("claude", ["claude", prompt])
 
 
@@ -244,7 +247,7 @@ def cmd_run(args):
 def cmd_status():
     job("summary")
     print("\nNext run:")
-    res = sh(str(JOB), "queue")
+    res = sh(*portable.script(JOB, "queue"))
     print(res.stdout.rstrip() or "  nothing is queued; label an issue with ./fx queue <issue>")
     if res.returncode:
         print(res.stderr.strip(), file=sys.stderr)
@@ -283,7 +286,8 @@ def words(args, what):
         return sys.stdin.read()
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not editor:
-        print(f"{what} End with Ctrl-D on an empty line.")
+        eof = "Ctrl-Z and Enter" if portable.WINDOWS else "Ctrl-D"
+        print(f"{what} End with {eof} on an empty line.")
         return sys.stdin.read()
     import shlex
     import tempfile
@@ -304,7 +308,7 @@ def decide(verb, args, what):
     text = words(args[1:], what)
     if not text.strip():
         die("nothing written; nothing changed")
-    code = subprocess.run([str(JOB), verb, args[0]], cwd=REPO, input=text, text=True).returncode
+    code = subprocess.run(portable.script(JOB, verb, args[0]), cwd=REPO, input=text, text=True).returncode
     if code == 0 and verb == "feedback":
         print("Run ./fx run to put the factory back to work on it.")
     return code
