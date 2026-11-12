@@ -13,17 +13,35 @@ tests cover the state machine, the gate and the trackers, never a model.
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "factory" / "bin"))
+import portable  # noqa: E402
+
+SCRIPTS = {"fx", "job", "gate", "route", "guard"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
 
+def launch(cmd):
+    """The command line for one of the factory's scripts. Unix runs them by their
+    shebang line; Windows can't, so there Python and Git Bash start them."""
+    if not portable.WINDOWS:
+        return [str(c) for c in cmd]
+    name = Path(str(cmd[0])).name
+    if name.endswith(".sh"):
+        return [portable.bash(), *map(str, cmd)]
+    if name in SCRIPTS:
+        return [sys.executable, *map(str, cmd)]
+    return [str(c) for c in cmd]
+
+
 def sh(cmd, cwd, check=True, stdin=None):
-    res = subprocess.run(cmd, cwd=cwd, env=ENV, capture_output=True, text=True, input=stdin)
+    res = subprocess.run(launch(cmd), cwd=cwd, env=ENV, capture_output=True, text=True, input=stdin)
     if check:
         assert res.returncode == 0, f"{' '.join(map(str, cmd))}\n{res.stdout}\n{res.stderr}"
     return res
@@ -323,6 +341,23 @@ def test_guard_keeps_agents_inside_their_job(sb):
     assert guard("reviewer", "Bash", command="cd w && git diff origin/main...HEAD") == 0
 
 
+def test_guard_sees_windows_spellings_of_the_factory_paths(sb):
+    """Windows reaches factory/bin/job as factory\\bin\\job or FACTORY/BIN/JOB too."""
+    def guard(role, command):
+        event = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(sb.repo)})
+        return sh([str(sb.repo / "factory/bin/guard"), role], sb.repo, check=False, stdin=event).returncode
+
+    assert guard("builder", r"factory\bin\job merge 001-x") == 2
+    assert guard("builder", r"python3 .\factory\bin\route 001-x") == 2
+    assert guard("builder", "python3 FACTORY/BIN/JOB advance 001-x review") == 2
+    assert guard("builder", r"factory\bin\job open-change 001-x T") == 0
+    assert guard("builder", r"echo x > factory\jobs\001-x\job.json") == 2
+    assert guard("builder", r"cp evil Factory\Bin\guard") == 2
+    assert guard("builder", "git push origin HEAD:MAIN") == 2
+    assert guard("reviewer", "cd w && GIT commit -am x") == 2
+    assert guard("reviewer", r"type factory\jobs\001-x\spec.md") == 0
+
+
 def test_posts_have_credentials_removed(sb):
     job_id = sb.job("create", sb.issue()).stdout.strip()
     (sb.dir(job_id) / "intake.md").write_text(
@@ -336,17 +371,19 @@ def test_posts_have_credentials_removed(sb):
 # ---- M2: cost never stops a job ------------------------------------------------
 
 
-def transcript(sb, job_id, model):
+def transcript(sb, job_id, model, spell=str, note=""):
     import re
     project = re.sub(r"[^A-Za-z0-9]", "-", str(sb.repo.resolve()))
     d = sb.cfg / "projects" / project / "s1" / "subagents"
     d.mkdir(parents=True, exist_ok=True)
     folder = (sb.repo / "factory" / "jobs" / job_id).resolve()
     usage = {"input_tokens": 1_000_000, "output_tokens": 0}
+    prompt = f"Job: {job_id}. Job folder: {spell(folder)}/. M{note}"
     (d / f"agent-{model}.jsonl").write_text(
-        json.dumps({"type": "user", "message": {"content": f"Job: {job_id}. Job folder: {folder}/. M"}})
+        json.dumps({"type": "user", "message": {"content": prompt}}, ensure_ascii=False)
         + "\n"
-        + json.dumps({"type": "assistant", "message": {"id": "m1", "model": model, "usage": usage}}) + "\n")
+        + json.dumps({"type": "assistant", "message": {"id": "m1", "model": model, "usage": usage}}) + "\n",
+        encoding="utf-8")
 
 
 def test_cost_is_summed_and_an_unpriced_model_only_warns(sb):
@@ -360,6 +397,32 @@ def test_cost_is_summed_and_an_unpriced_model_only_warns(sb):
     s = sb.state(job_id)
     assert s["stage"] == "spec" and s["cost_usd"] == 4.0 and s["cost_incomplete"] == ["claude-opus-9-9"]
     assert "$4.00+" in sb.job("summary").stdout
+
+
+def test_cost_counts_a_prompt_that_spells_the_folder_with_forward_slashes(sb):
+    """On Windows the orchestrator mixes the slashes (C:/Users/x with backslashes, then
+    /factory/jobs/<id>/), and the transcripts hold text that isn't ASCII."""
+    job_id = sb.job("create", sb.issue()).stdout.strip()
+    transcript(sb, job_id, "claude-opus-5-5", spell=lambda f: f.as_posix(), note=" Café ✓")
+    sb.intake(job_id)
+    sb.route(job_id)
+    sb.job("advance", job_id, "spec")
+    assert sb.state(job_id)["cost_usd"] == 4.0
+
+
+def test_a_merged_job_survives_a_worktree_git_already_dropped(sb):
+    """Windows can refuse to delete a folder a process still has open. Git then
+    forgets the worktree but the folder stays; that must not stop the job or the queue."""
+    job_id = sb.to_review()
+    sh(["git", "merge", "-q", "--no-ff", "-m", "by hand", f"factory/{job_id}"], sb.repo)
+    sh(["git", "push", "-q", "origin", "main"], sb.repo)
+    wt = sb.wt(job_id)
+    sh(["git", "worktree", "remove", "--force", str(wt)], sb.repo)
+    (wt / "leftover").mkdir(parents=True)
+    sb.job("queue")
+    assert sb.state(job_id)["stage"] == "merged"
+    assert not wt.exists()
+    sb.job("queue")
 
 
 def test_a_budget_stops_an_expensive_job(sb):
@@ -380,7 +443,7 @@ def test_a_budget_stops_an_expensive_job(sb):
 
 def test_jobs_created_at_once_get_different_numbers(sb):
     refs = [sb.issue(title=f"Thing {n}") for n in range(3)]
-    procs = [subprocess.Popen([str(sb.repo / "factory/bin/job"), "create", r], cwd=sb.repo, env=ENV,
+    procs = [subprocess.Popen(launch([sb.repo / "factory/bin/job", "create", r]), cwd=sb.repo, env=ENV,
                               stdout=subprocess.PIPE, text=True) for r in refs]
     ids = sorted(p.communicate()[0].strip() for p in procs)
     assert [i[:3] for i in ids] == ["001", "002", "003"]
@@ -397,7 +460,7 @@ def test_two_merges_at_once_both_land(sb):
     sb.review(b)
     sb.job("advance", b, "approve")
     sb.decide(b)
-    procs = [subprocess.Popen([str(sb.repo / "factory/bin/job"), "merge", j], cwd=sb.repo, env=ENV,
+    procs = [subprocess.Popen(launch([sb.repo / "factory/bin/job", "merge", j]), cwd=sb.repo, env=ENV,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for j in (a, b)]
     for p in procs:
         p.communicate()
@@ -645,7 +708,7 @@ def test_a_reply_typed_by_hand_is_seen(sb):
 
 def test_issues_filed_at_once_are_all_kept(sb):
     job = str(sb.repo / "factory/bin/job")
-    procs = [subprocess.Popen([job, "new-issue", f"Thing {n}"], cwd=sb.repo, env=ENV,
+    procs = [subprocess.Popen(launch([job, "new-issue", f"Thing {n}"]), cwd=sb.repo, env=ENV,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) for n in range(4)]
     refs = sorted(p.communicate("body")[0].strip() for p in procs)
     assert refs == ["1", "2", "3", "4"]

@@ -12,8 +12,8 @@ outside your machine and needs no account anywhere except Claude.
 
 ## Quick start
 
-The scripts are tested on macOS and on Ubuntu 22.04 and 24.04; on Windows use
-WSL. You need:
+The scripts are tested on macOS, on Ubuntu 22.04 and 24.04, and on Windows,
+either natively (see [Windows without WSL](#windows-without-wsl)) or in WSL. You need:
 
 - git and Python 3.10 or later, with pytest and ruff
 - Claude Code 2.1.257 or later, on a plan that includes Fable (intake runs on it)
@@ -57,6 +57,46 @@ curl -fsSL https://claude.ai/install.sh | bash
 Open a new terminal so `ruff` and `claude` are on your `PATH`, sign in with
 `claude`, then follow the quick start. The dashboard opens in your Windows
 browser at the same `localhost` address.
+
+### Windows without WSL
+
+The factory also runs on Windows itself. Claude Code runs its shell commands in
+Git Bash there, and the factory does the same for `checks.sh` and the setup
+script. You need:
+
+- [Git for Windows](https://git-scm.com/download/win), which brings Git Bash
+- Python 3.10 or later that answers to `python3` in Git Bash. The `python3`
+  Windows ships is often only a shortcut to the Microsoft Store and runs
+  nothing; [uv](https://docs.astral.sh/uv/) installs a real one
+- pytest and ruff
+- Claude Code, signed in
+
+In PowerShell:
+
+```powershell
+winget install --id Git.Git
+winget install --id astral-sh.uv
+uv python install 3.14 --default
+uv tool install ruff
+uv pip install --python 3.14 --system --break-system-packages pytest
+winget install --id Anthropic.ClaudeCode
+```
+
+Open a new terminal, sign in with `claude`, then run the quick start in **Git
+Bash**: `factory/local-setup.sh` is a bash script. After that `./fx` works in
+Git Bash and `.\fx.cmd` works in PowerShell and cmd, with the same commands. `./fx doctor` checks that Git Bash finds a real
+`python3`.
+
+What is different from Linux:
+
+- The factory's scripts have no `.exe` and Windows ignores their first line, so
+  the factory starts them with Python and starts `checks.sh` with Git Bash.
+  A plain `bash` on Windows may be the WSL launcher, which the factory skips.
+- The agents stop a dev server with `netstat` and `taskkill`, as `lsof` doesn't
+  exist on Windows.
+- Agents run with your Windows account and everything it can reach. WSL kept a
+  wall between the factory and Windows; native Windows doesn't. Keep
+  `"auto_merge": false` and run only issues you wrote yourself.
 
 ## Working with issues
 

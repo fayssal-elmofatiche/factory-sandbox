@@ -1,0 +1,34 @@
+# The project's checks and the factory's own tests, on Linux and on native Windows.
+# WSL is Linux; macOS takes the same code paths as Linux.
+name: factory-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows, as the factory uses it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: python3 on Windows
+        if: runner.os == 'Windows'
+        # checks.sh and the agents' hooks call python3; setup-python only installs python.exe.
+        run: cp "$(command -v python)" "$(dirname "$(command -v python)")/python3.exe"
+      - run: python3 -m pip install pytest ruff
+      - run: git config --global user.name ci && git config --global user.email ci@example.com
+      - name: The project's checks
+        run: bash factory/checks.sh
+      - name: The factory's tests
+        run: python3 -m pytest factory/tests -q

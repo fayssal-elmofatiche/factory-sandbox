@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import portable
+
 FACTORY = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((FACTORY / "config.json").read_text())
 
@@ -26,8 +28,8 @@ def main(argv):
     if len(argv) != 1:
         die("usage: route <job-id>")
     job_id = argv[0]
-    job_bin = str(FACTORY / "bin" / "job")
-    res = subprocess.run([job_bin, "sync", job_id], capture_output=True, text=True)
+    job_bin = FACTORY / "bin" / "job"
+    res = subprocess.run(portable.script(job_bin, "sync", job_id), capture_output=True, text=True)
     if res.returncode != 0:
         die(res.stderr.strip())
     job = json.loads((FACTORY / "jobs" / job_id / "job.json").read_text())
@@ -41,7 +43,7 @@ def main(argv):
             die(f"surface {surface!r} isn't in config.json surface_reviewers ({', '.join(CONFIG['surface_reviewers'])})")
         reviewers.update(extra)
     agents = {"reviewers": reviewers}
-    res = subprocess.run([job_bin, "agents", job_id, json.dumps(agents)], capture_output=True, text=True)
+    res = subprocess.run(portable.script(job_bin, "agents", job_id, json.dumps(agents)), capture_output=True, text=True)
     if res.returncode != 0:
         die(res.stderr.strip())
     print(f"{job_id}: reviewers " + ", ".join(f"{k} {v}" for k, v in reviewers.items()))

@@ -23,6 +23,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 FACTORY = REPO / "factory"
+sys.path.insert(0, str(FACTORY / "bin"))
+import portable  # noqa: E402  (lives next to the factory's scripts)
+
 JOB = FACTORY / "bin" / "job"
 DECK = REPO / "docs" / "presentation.html"
 TAG = "demo-start"  # the starting point `fx reset` returns to; moves when the setup changes
@@ -66,7 +69,7 @@ def state_dir():
 
 def job(*args):
     """Run factory/bin/job and pass its output and exit code through."""
-    return subprocess.run([str(JOB), *args], cwd=REPO).returncode
+    return subprocess.run(portable.script(JOB, *args), cwd=REPO).returncode
 
 
 # ---- doctor ----------------------------------------------------------------
@@ -113,14 +116,34 @@ def cmd_doctor():
     rows.append(("ok" if remote.returncode == 0 else "MISSING", "git remote origin",
                  remote.stdout.strip() if remote.returncode == 0 else "the factory branches every job from origin"))
 
-    for tool, why in (("agent-browser", "needed for issues that change the web page"),
-                      ("lsof", "used to stop a job's dev server")):
+    tools = [("agent-browser", "needed for issues that change the web page")]
+    bash = "bash"
+    if portable.WINDOWS:
+        # checks.sh and the agents' hooks run in Git Bash and call `python3` there. Windows'
+        # own python3 is often only a shortcut to the Microsoft Store, which runs nothing.
+        try:
+            bash = portable.bash()
+            rows.append(("ok", "Git Bash", bash))
+        except SystemExit:
+            bash = None
+            rows.append(("MISSING", "Git Bash", "install Git for Windows: https://git-scm.com/download/win"))
+        if bash:
+            py = sh(bash, "-c", "python3 -c 'import sys; print(sys.version_info >= (3, 10), sys.version.split()[0])'")
+            ok = py.returncode == 0 and py.stdout.startswith("True")
+            rows.append(("ok" if ok else "MISSING", "python3 in Git Bash",
+                         py.stdout.split()[-1] if ok else "install one: uv python install 3.14 --default"))
+    else:  # Windows agents use netstat and taskkill instead
+        tools.append(("lsof", "used to stop a job's dev server"))
+    for tool, why in tools:
         rows.append(("ok" if have(tool) else "warn", tool, "" if have(tool) else why))
 
-    checks = sh("bash", str(FACTORY / "checks.sh"))
-    tail = (checks.stdout or checks.stderr).strip().splitlines()
-    rows.append(("ok" if checks.returncode == 0 else "MISSING", "factory/checks.sh passes",
-                 tail[-1] if tail else ""))
+    if bash:
+        checks = sh(bash, str(FACTORY / "checks.sh"))
+        tail = (checks.stdout or checks.stderr).strip().splitlines()
+        rows.append(("ok" if checks.returncode == 0 else "MISSING", "factory/checks.sh passes",
+                     tail[-1] if tail else ""))
+    else:
+        rows.append(("MISSING", "factory/checks.sh passes", "needs Git Bash"))
 
     width = max(len(name) for _, name, _ in rows)
     for level, name, detail in rows:
@@ -142,7 +165,8 @@ def dashboard_state():
         return None
     try:
         st = json.loads(path.read_text())
-        os.kill(st["pid"], 0)  # raises if the process is gone
+        if not portable.alive(st["pid"]):
+            raise ValueError("the dashboard is gone")
         return st
     except (ValueError, KeyError, OSError):
         path.unlink(missing_ok=True)
@@ -162,7 +186,7 @@ def free_port(start=8765):
 
 def open_url(url):
     """Open a URL in the browser; under WSL, hand it to Windows."""
-    if "microsoft" in os.uname().release.lower():
+    if portable.wsl():
         for tool in ("wslview", "explorer.exe"):
             if shutil.which(tool):
                 subprocess.run([tool, url], capture_output=True)
@@ -174,7 +198,7 @@ def open_url(url):
 
 
 def deck_url():
-    if "microsoft" in os.uname().release.lower() and shutil.which("wslpath"):
+    if portable.wsl() and shutil.which("wslpath"):
         win = sh("wslpath", "-w", str(DECK)).stdout.strip()
         if win:
             return win
@@ -188,7 +212,7 @@ def cmd_up(args):
         log = open(state_dir() / "dashboard.log", "w")
         proc = subprocess.Popen(
             [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
-            cwd=FACTORY, stdout=log, stderr=log, start_new_session=True)
+            cwd=FACTORY, stdout=log, stderr=log, **portable.own_group())
         st = {"pid": proc.pid, "port": port}
         (state_dir() / "dashboard.json").write_text(json.dumps(st))
         time.sleep(0.4)
@@ -212,10 +236,7 @@ def cmd_down():
     if not st:
         print("the dashboard is not running")
         return 0
-    try:
-        os.kill(st["pid"], signal.SIGTERM)
-    except OSError:
-        pass
+    portable.stop(st["pid"])
     (state_dir() / "dashboard.json").unlink(missing_ok=True)
     print(f"dashboard on port {st['port']} stopped")
     return 0
@@ -235,6 +256,8 @@ def cmd_run(args):
     prompt = "/factory run" + (f" {args[0]}" if args else "")
     print(f"Starting Claude Code in {REPO} with: {prompt}")
     os.chdir(REPO)
+    if portable.WINDOWS:  # Windows has no exec: run Claude Code and pass its exit code on
+        return subprocess.run([shutil.which("claude"), prompt]).returncode
     os.execvp("claude", ["claude", prompt])
 
 
@@ -244,7 +267,7 @@ def cmd_run(args):
 def cmd_status():
     job("summary")
     print("\nNext run:")
-    res = sh(str(JOB), "queue")
+    res = sh(*portable.script(JOB, "queue"))
     print(res.stdout.rstrip() or "  nothing is queued; label an issue with ./fx queue <issue>")
     if res.returncode:
         print(res.stderr.strip(), file=sys.stderr)
@@ -264,7 +287,7 @@ def cmd_watch():
                     verb = "new    " if p not in seen else "changed"
                     seen[p] = mtime
                     first = p.read_text(errors="replace").split("\n", 1)[0][:60]
-                    print(f"{time.strftime('%H:%M:%S', time.localtime(mtime))}  {verb}  {p.relative_to(jobs)}  {first}")
+                    print(f"{time.strftime('%H:%M:%S', time.localtime(mtime))}  {verb}  {p.relative_to(jobs).as_posix()}  {first}")
             time.sleep(1.5)
     except KeyboardInterrupt:
         print()
@@ -283,7 +306,8 @@ def words(args, what):
         return sys.stdin.read()
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not editor:
-        print(f"{what} End with Ctrl-D on an empty line.")
+        eof = "Ctrl-Z and Enter" if portable.WINDOWS else "Ctrl-D"
+        print(f"{what} End with {eof} on an empty line.")
         return sys.stdin.read()
     import shlex
     import tempfile
@@ -304,7 +328,7 @@ def decide(verb, args, what):
     text = words(args[1:], what)
     if not text.strip():
         die("nothing written; nothing changed")
-    code = subprocess.run([str(JOB), verb, args[0]], cwd=REPO, input=text, text=True).returncode
+    code = subprocess.run(portable.script(JOB, verb, args[0]), cwd=REPO, input=text, text=True).returncode
     if code == 0 and verb == "feedback":
         print("Run ./fx run to put the factory back to work on it.")
     return code
@@ -441,7 +465,7 @@ def cmd_reset(args):
         dest = FACTORY / "runs" / time.strftime("%Y%m%d-%H%M%S")
         for name in jobs:
             shutil.copytree(FACTORY / "jobs" / name, dest / name, ignore=shutil.ignore_patterns(".lock"))
-        print(f"saved {len(jobs)} job folder(s) to {dest.relative_to(REPO)}")
+        print(f"saved {len(jobs)} job folder(s) to {dest.relative_to(REPO).as_posix()}")
 
     # Set the setup aside, as it is in the working tree now (committed or not).
     aside = state_dir() / "setup-aside"
@@ -554,7 +578,7 @@ def cmd_config(args):
     if new == text:
         print(f"{key} is already {value}")
         return 0
-    path.write_text(new)
+    path.write_text(new, newline="\n")  # LF on Windows too, as .gitattributes wants
     sh("git", "add", "factory/config.json", check=True)
     sh("git", "commit", "-m", f"Set {key} to {value}", check=True)
     print(f"{key} is now {value} (committed as {short('HEAD')}).")

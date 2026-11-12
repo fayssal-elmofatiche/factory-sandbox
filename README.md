@@ -30,8 +30,8 @@ cd ~/factory-demo
 
 You need git, Python 3.10+ with pytest and ruff, and Claude Code 2.1.257 or
 later on a plan that includes Fable. `./fx doctor` checks all of that and says
-what is missing. The scripts are tested on macOS and Ubuntu; on Windows use WSL. See
-[docs/local-mode.md](docs/local-mode.md) for the WSL steps.
+what is missing. The scripts are tested on macOS, Ubuntu and Windows, natively or
+in WSL. See [docs/local-mode.md](docs/local-mode.md) for the Windows steps.
 
 ## How it works
 
