@@ -100,13 +100,17 @@ def run_checks(worktree):
     return acceptance.timed([portable.bash(), str(CHECKS)], worktree, TIMEOUT, "factory/checks.sh")
 
 
-def acceptance_tests(job):
+def acceptance_tests(job, builder=False):
     """The job's acceptance.py when the gate must run it, else None. Refuses a
     file that differs from the copy factory/bin/job sealed: the check is made
-    where the file is used, not only when the job moves."""
+    where the file is used, not only when the job moves. The builder can't
+    park a job, so the Stop hook tells it to block instead."""
     tests = FACTORY / "jobs" / job["id"] / acceptance.NAME
     sealed = job.get("files", {}).get(acceptance.NAME)
     if sealed and (not tests.exists() or hashlib.sha256(tests.read_bytes()).hexdigest() != sealed):
+        if builder:
+            die(f"{acceptance.NAME} was changed after it was sealed. Don't touch it: write STATUS: BLOCKED in "
+                f"build.md, say that {acceptance.NAME} changed, and stop")
         die(f"{acceptance.NAME} changed after the factory accepted it. Park the job (`job park`) and look at "
             f"factory/jobs/{job['id']}/ before going on")
     return tests if CONFIG.get("acceptance", True) and tests.exists() else None
@@ -118,7 +122,8 @@ def acceptance_section(tests, code, log, seconds, name):
         return f"Not run: {why}.", "Acceptance tests: not run"
     passed, failed = acceptance.counts(log)
     tail = "\n".join(log.rstrip().splitlines()[-TAIL:])
-    result = "passed" if code == 0 else f"failed with exit {code}"
+    result = ("passed" if code == 0 else "collected no tests (exit 5)" if code == acceptance.NO_TESTS
+              else f"failed with exit {code}")
     return (f"Exit {code} in {seconds}s: {passed} passed, {failed} failed. Last {TAIL} lines of {name}.log:\n\n"
             f"```\n{tail}\n```",
             f"Acceptance tests {result} in {seconds}s ({passed} passed, {failed} failed)")
@@ -186,6 +191,7 @@ def hook():
     prompt = content if isinstance(content, str) else " ".join(b.get("text", "") for b in content)
     job_id = prompt.split("Job: ", 1)[1].split(".", 1)[0]
     job = json.loads((FACTORY / "jobs" / job_id / "job.json").read_text())
+    tests = acceptance_tests(job, builder=True)
     code, log, _ = run_checks(job["worktree"])
     if code != 0:
         tail = "\n".join(log.rstrip().splitlines()[-40:])
@@ -193,7 +199,6 @@ def hook():
               f"build. Fix it, or write STATUS: BLOCKED in build.md if you can't.\n\n{tail}",
               file=sys.stderr)
         sys.exit(2)
-    tests = acceptance_tests(job)
     if tests:
         code, log, _ = acceptance.run(job["worktree"], tests, TIMEOUT)
         if code != 0:

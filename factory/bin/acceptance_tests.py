@@ -41,6 +41,7 @@ import portable
 
 NAME = "acceptance.py"
 # A test that doesn't run proves nothing, as in factory/checks.sh.
+NO_TESTS = 5  # pytest's exit code when it collected nothing
 NOT_RUN = re.compile(r"\b(skipped|xfailed|xpassed|deselected)\b")
 
 
@@ -57,10 +58,18 @@ def problem(path):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=NAME)
     except (SyntaxError, ValueError, UnicodeDecodeError) as e:
         return f"{NAME} doesn't compile: {e}"
-    if not any(isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test_")
-               for node in ast.walk(tree)):
-        return f"{NAME} has no test functions (test_...)"
+    if not any(collected(node) for node in tree.body):
+        return (f"{NAME} has no test functions pytest collects: a module-level `def test_...`, "
+                f"or a `class Test...` with one")
     return None
+
+
+def collected(node):
+    """A test function pytest collects with its default settings."""
+    def test(n):
+        return isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith("test_")
+    return test(node) or (isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+                          and any(test(n) for n in node.body))
 
 
 def timed(cmd, cwd, timeout, what, env=None):
@@ -117,8 +126,14 @@ def run(worktree, tests, timeout):
                "--rootdir", str(worktree), "--import-mode=importlib", copy]
         code, out, seconds = timed(cmd, worktree, timeout, f"The acceptance tests ({NAME})", environment())
     last = out.rstrip().splitlines()[-1] if out.strip() else ""
-    if code == 0 and NOT_RUN.search(last):
+    if code == NO_TESTS:
+        out += (f"\nacceptance: pytest collected no tests from {NAME} (exit 5). A test class with __init__, "
+                f"or a test pytest can't import, is never run.\n")
+    elif code == 0 and NOT_RUN.search(last):
         out += "\nacceptance: tests were skipped, deselected or marked as expected failures. Every test must run and pass.\n"
+        code = 1
+    elif code == 0 and counts(out)[0] == 0:
+        out += "\nacceptance: pytest exited 0 but reported no passed test. Every test must run and pass.\n"
         code = 1
     return code, out, seconds
 

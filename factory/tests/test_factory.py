@@ -1368,6 +1368,16 @@ def test_nothing_in_the_worktree_or_environment_makes_a_failing_acceptance_test_
     assert "1 failed" in out, out
 
 
+def test_an_exit_0_without_a_passed_test_is_a_failure(tmp_path):
+    """Whatever ends pytest early with exit 0 reports nothing that passed."""
+    import acceptance_tests
+
+    tests = tmp_path / "acceptance.py"
+    tests.write_text(EXIT_0 + "\n\ndef test_ac1_x():\n    \"\"\"AC1.\"\"\"\n")
+    code, out, _ = acceptance_tests.run(tmp_path, tests, 120)
+    assert code == 1 and "no passed test" in out, out
+
+
 def test_the_acceptance_tests_still_import_the_branchs_own_packages(tmp_path):
     import acceptance_tests
 
@@ -1504,3 +1514,86 @@ def test_the_base_run_after_respec_runs_on_the_base_not_the_builders_branch(sb):
     assert base.startswith("ACCEPTANCE ON BASE: 0 passed, 1 failed"), base
     main = sh(["git", "rev-parse", "origin/main"], sb.repo).stdout.strip()
     assert main[:7] in base
+
+
+# ---- acceptance tests: the smaller holes ----------------------------------------------
+
+
+@pytest.mark.parametrize("text", [
+    "class Helper:\n    def test_ac1_x(self):\n        assert True\n",
+    "def outer():\n    def test_ac1_x():\n        assert True\n",
+    "class TestA:\n    class Inner:\n        def test_ac1_x(self):\n            assert True\n",
+])
+def test_spec_to_build_refuses_tests_pytest_would_not_collect(sb, text):
+    job_id = sb.to_spec()
+    sb.spec(job_id, text)
+    res = sb.job("advance", job_id, "build", check=False)
+    assert res.returncode == 1 and "no test functions" in res.stderr
+    assert sb.state(job_id)["stage"] == "spec"
+
+
+def test_spec_to_build_accepts_tests_in_a_test_class(sb):
+    job_id = sb.to_spec()
+    sb.spec(job_id, 'class TestAC1:\n    def test_ac1_x(self):\n        """AC1."""\n        assert True\n')
+    sb.job("advance", job_id, "build")
+    assert sb.state(job_id)["stage"] == "build"
+
+
+def test_gate_says_so_when_pytest_collects_no_acceptance_tests(sb):
+    uncollectable = ('class TestAC1:\n    def __init__(self):\n        self.x = 1\n\n'
+                     '    def test_ac1_x(self):\n        """AC1."""\n        assert self.x\n')
+    job_id = sb.to_build(acceptance=uncollectable)
+    res = gate_after(sb, job_id)
+    assert res.returncode == 1, res.stdout
+    assert "collected no tests" in (sb.dir(job_id) / "round-1" / "acceptance.log").read_text()
+
+
+def stop_hook(sb, job_id):
+    transcript = sb.repo.parent / f"transcript-{job_id}.jsonl"
+    transcript.write_text(json.dumps({"message": {"content": f"Job: {job_id}. Build it."}}) + "\n")
+    event = json.dumps({"agent_transcript_path": str(transcript)})
+    return sh([str(sb.repo / "factory/bin/gate"), "--hook"], sb.repo, check=False, stdin=event)
+
+
+def test_the_builders_stop_hook_runs_the_acceptance_tests(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    sb.commit(job_id)
+    res = stop_hook(sb, job_id)
+    assert res.returncode == 2 and "acceptance tests" in res.stderr, res.stderr
+    sb.commit(job_id, text="THING = 1\n")
+    res = stop_hook(sb, job_id)
+    assert res.returncode == 0, res.stderr
+
+
+def test_the_stop_hook_tells_the_builder_to_block_when_the_tests_were_tampered_with(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    sb.commit(job_id, text="THING = 1\n")
+    (sb.dir(job_id) / "acceptance.py").write_text(PASSING)
+    res = stop_hook(sb, job_id)
+    assert res.returncode == 2 and "STATUS: BLOCKED" in res.stderr, res.stderr
+    assert "job park" not in res.stderr
+
+
+def test_gate_acceptance_reports_failure_with_its_exit_code(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    sb.commit(job_id)
+    res = sh([str(sb.repo / "factory/bin/gate"), job_id, "--acceptance"], sb.repo, check=False)
+    assert res.returncode == 1 and "1 failed" in res.stdout
+    sb.commit(job_id, text="THING = 1\n")
+    res = sh([str(sb.repo / "factory/bin/gate"), job_id, "--acceptance"], sb.repo, check=False)
+    assert res.returncode == 0 and "1 passed" in res.stdout
+
+
+def test_acceptance_tests_written_with_crlf_still_merge(sb):
+    """Git stores the kept copy with LF (.gitattributes); the sealed file has CRLF."""
+    job_id = sb.to_spec()
+    sb.spec(job_id)
+    (sb.dir(job_id) / "acceptance.py").write_bytes(PASSING.replace("\n", "\r\n").encode())
+    sb.job("advance", job_id, "build")
+    assert gate_after(sb, job_id).returncode == 0
+    sb.job("advance", job_id, "review")
+    sb.review(job_id)
+    sb.job("advance", job_id, "approve")
+    sb.decide(job_id)
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
