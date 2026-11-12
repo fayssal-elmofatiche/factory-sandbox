@@ -182,6 +182,21 @@ def test_retro_counts_why_rounds_went_back(sandbox):
     assert json.loads(fx(sandbox, "retro", "--json").stdout)["labels"]["bug"]["count"] == 1
 
 
+def test_retro_report_writes_a_dated_report_and_nothing_else(sandbox):
+    rd = sandbox / "factory" / "jobs" / "001-x" / "round-1"
+    rd.mkdir(parents=True)
+    (rd.parent / "job.json").write_text('{"stage": "merged"}')
+    (rd / "review-code.md").write_text("VERDICT: CHANGES\n\n## Findings\n1. [bug] a.py:1 x\n")
+    before = sorted(p.relative_to(sandbox) for p in (sandbox / "factory" / "jobs").rglob("*"))
+    shown = fx(sandbox, "retro", "--report", "--print", "--threshold", "1", "--date", "2026-11-12").stdout
+    assert "# Factory retro 2026-11-12" in shown and "`001-x/round-1/review-code.md:4`" in shown
+    assert not (sandbox / "factory" / "retro").exists()
+    out = fx(sandbox, "retro", "--report", "--threshold", "1", "--date", "2026-11-12").stdout
+    assert "Wrote factory/retro/2026-11-12.md" in out
+    assert (sandbox / "factory" / "retro" / "2026-11-12.md").read_text() == shown + "\n"
+    assert sorted(p.relative_to(sandbox) for p in (sandbox / "factory" / "jobs").rglob("*")) == before
+
+
 # ---- config ----------------------------------------------------------------
 
 
