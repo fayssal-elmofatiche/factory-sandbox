@@ -267,7 +267,7 @@ def cmd_watch():
                     verb = "new    " if p not in seen else "changed"
                     seen[p] = mtime
                     first = p.read_text(errors="replace").split("\n", 1)[0][:60]
-                    print(f"{time.strftime('%H:%M:%S', time.localtime(mtime))}  {verb}  {p.relative_to(jobs)}  {first}")
+                    print(f"{time.strftime('%H:%M:%S', time.localtime(mtime))}  {verb}  {p.relative_to(jobs).as_posix()}  {first}")
             time.sleep(1.5)
     except KeyboardInterrupt:
         print()
@@ -445,7 +445,7 @@ def cmd_reset(args):
         dest = FACTORY / "runs" / time.strftime("%Y%m%d-%H%M%S")
         for name in jobs:
             shutil.copytree(FACTORY / "jobs" / name, dest / name, ignore=shutil.ignore_patterns(".lock"))
-        print(f"saved {len(jobs)} job folder(s) to {dest.relative_to(REPO)}")
+        print(f"saved {len(jobs)} job folder(s) to {dest.relative_to(REPO).as_posix()}")
 
     # Set the setup aside, as it is in the working tree now (committed or not).
     aside = state_dir() / "setup-aside"

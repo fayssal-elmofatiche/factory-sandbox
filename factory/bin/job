@@ -254,10 +254,10 @@ class FilesTracker:
     def read(self, ref):
         path = self.path(ref)
         if not path.exists():
-            raise Refused(f"no issue {ref}: {path.relative_to(REPO)} doesn't exist")
+            raise Refused(f"no issue {ref}: {path.relative_to(REPO).as_posix()} doesn't exist")
         text = path.read_text()
         if not text.startswith("---\n") or "\n---\n" not in text[4:]:
-            raise Refused(f"{path.relative_to(REPO)} must start with a --- header block")
+            raise Refused(f"{path.relative_to(REPO).as_posix()} must start with a --- header block")
         head, _, rest = text[4:].partition("\n---\n")
         meta = {}
         for line in head.splitlines():
@@ -306,7 +306,7 @@ class FilesTracker:
             try:
                 out.append(self.read(p.stem))
             except Refused as e:
-                warn(f"skipping {p.relative_to(REPO)}: {e}")
+                warn(f"skipping {p.relative_to(REPO).as_posix()}: {e}")
         return out
 
     def whoami(self):

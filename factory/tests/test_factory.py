@@ -341,6 +341,23 @@ def test_guard_keeps_agents_inside_their_job(sb):
     assert guard("reviewer", "Bash", command="cd w && git diff origin/main...HEAD") == 0
 
 
+def test_guard_sees_windows_spellings_of_the_factory_paths(sb):
+    """Windows reaches factory/bin/job as factory\\bin\\job or FACTORY/BIN/JOB too."""
+    def guard(role, command):
+        event = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(sb.repo)})
+        return sh([str(sb.repo / "factory/bin/guard"), role], sb.repo, check=False, stdin=event).returncode
+
+    assert guard("builder", r"factory\bin\job merge 001-x") == 2
+    assert guard("builder", r"python3 .\factory\bin\route 001-x") == 2
+    assert guard("builder", "python3 FACTORY/BIN/JOB advance 001-x review") == 2
+    assert guard("builder", r"factory\bin\job open-change 001-x T") == 0
+    assert guard("builder", r"echo x > factory\jobs\001-x\job.json") == 2
+    assert guard("builder", r"cp evil Factory\Bin\guard") == 2
+    assert guard("builder", "git push origin HEAD:MAIN") == 2
+    assert guard("reviewer", "cd w && GIT commit -am x") == 2
+    assert guard("reviewer", r"type factory\jobs\001-x\spec.md") == 0
+
+
 def test_posts_have_credentials_removed(sb):
     job_id = sb.job("create", sb.issue()).stdout.strip()
     (sb.dir(job_id) / "intake.md").write_text(
