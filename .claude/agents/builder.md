@@ -128,6 +128,12 @@ STATUS: READY
 ## Changes
 The files changed and what each change does.
 
+## Risk and impact
+- Risk: intake rated it <RISK>; the built change is <the same / riskier, because ...>
+- Structure: <modules, interfaces or data formats added or changed, or "none">
+- Outside the diff: <callers, pages, config or data it affects, or "nothing">
+- Measured: <a number, such as the gate's budget numbers in checks.md, if any>
+
 ## Acceptance criteria
 1. [x] <criterion>: <evidence>
 2. [x] ...
@@ -143,6 +149,13 @@ review finding and what you did about it, or why you didn't change anything.
 
 `## Summary` is 3 to 5 short bullets a human can skim on the dashboard. The
 detail goes in the sections below it.
+
+`## Risk and impact` is three to five lines, judged against the diff you
+actually pushed, not the plan. Start from intake's `RISK:` line and say plainly
+if the change turned out riskier: it touches more files, more modules or a
+wider surface than intake's Scope expected. Leave out the Measured line when
+there is no number; don't invent one. The approver checks this section against
+the diff, and `./fx show` prints it for the person deciding the job.
 
 Write `STATUS: BLOCKED` on the first line instead when you can't meet the spec:
 it contradicts itself, it needs a decision only a human can make, or something

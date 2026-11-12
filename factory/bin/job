@@ -1393,10 +1393,14 @@ def cmd_show(job):
     print(f"{job['id']}  issue #{job['issue']}  {job['title']}")
     print(f"stage {job['stage']}, round {job['round']}, cost ${job['cost_usd']:.2f}"
           + (f", {HOST.where(job)}" if HOST.where(job) else ""))
-    for name in ("intake.md", "decision.md"):
+    shown = ("Summary", "Why", "For the human", "Questions")
+    # build.md's Risk and impact is the builder's claim, shown for the person to
+    # weigh; nothing reads it to route or merge, which keep intake's RISK.
+    for name, parts in (("intake.md", shown), ("build.md", ("Summary", "Risk and impact")),
+                        ("decision.md", shown)):
         if (d / name).exists():
             print(f"\n{name}: {first_line(d / name)}")
-            for part in ("Summary", "Why", "For the human", "Questions"):
+            for part in parts:
                 text = section(d / name, part)
                 if text:
                     print(f"  {part}:\n" + "\n".join("    " + line for line in text.splitlines()))
