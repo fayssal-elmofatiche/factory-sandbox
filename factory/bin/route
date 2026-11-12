@@ -15,6 +15,9 @@ from pathlib import Path
 
 import portable
 
+if __name__ == "__main__":
+    portable.utf8()
+
 FACTORY = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((FACTORY / "config.json").read_text())
 

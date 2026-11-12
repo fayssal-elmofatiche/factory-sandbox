@@ -25,6 +25,11 @@ import re
 import sys
 from pathlib import Path
 
+import portable
+
+if __name__ == "__main__":
+    portable.utf8()
+
 REPO = Path(__file__).resolve().parents[2]
 BASE = json.loads((REPO / "factory" / "config.json").read_text())["base_branch"]
 
@@ -36,16 +41,26 @@ OWN_FILE = {
     "approver": r"factory/jobs/[^/]+/decision\.md",
 }
 
+# `git`, then any options that come before the subcommand: git -C <dir> push, git -c k=v commit.
+GIT = (r"""\bgit(?:\s+(?:-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+"""
+       r"""|--[a-z][a-z-]*(?:=\S+)?|-[a-zA-Z]))*\s+""")
+RECORDS = r"(?:job\.json|events\.jsonl|(?:merge-)?checks\.(?:md|log))"
+
 ALWAYS = [
     (r"(^|[\s;&|(])gh\s", "the factory runs without GitHub; issues and merges are factory/bin/job's"),
-    (r"\bgit\s+push\b[^|;&]*(--force\b|--force-with-lease\b|\s-f\b|--delete\b|--mirror\b|--all\b)", "no forced, deleting or bulk pushes"),
-    (rf"\bgit\s+push\b[^|;&]*(\s|:)(refs/heads/)?{re.escape(BASE)}(\s|$)", f"agents never push to {BASE}; only factory/bin/job merge does"),
+    (GIT + r"push\b[^|;&]*(--force\b|--force-with-lease\b|\s-f\b|--delete\b|--mirror\b|--all\b|\s\+\S)",
+     "no forced, deleting or bulk pushes"),
+    (GIT + rf"push\b[^|;&]*(\s|:)(refs/heads/)?{re.escape(BASE)}(\s|$)",
+     f"agents never push to {BASE}; only factory/bin/job merge does"),
     (r"(>|\btee\b|\bcp\b|\bmv\b|\brm\b|\bsed\s+-i|\btouch\b|\btruncate\b)[^|;&]*factory/(jobs|bin|config\.json|checks\.sh)",
      "factory/jobs/ and the factory's own files are written with the Write tool or by the scripts, not through the shell"),
-    (r"job\.json[^|;&]*(>|\btee\b)|(>|\btee\b)[^|;&]*job\.json", "job.json has one writer: factory/bin/job"),
+    # Writing to one of them: a redirect or tee onto it, rm, mv or sed -i naming it, cp with it as the target.
+    (rf"(>>?|\btee\b(\s+-a)?)\s*[^\s|;&]*{RECORDS}|\b(rm|mv|sed\s+-i)\b[^|;&]*{RECORDS}|\bcp\b[^|;&]*{RECORDS}\s*($|[|;&])",
+     "job.json, events.jsonl and the gate's checks files are written by the factory's scripts only"),
 ]
 NOT_BUILDER = [
-    (r"\bgit\s+(commit|push|merge|rebase|reset|revert|cherry-pick|am|apply|stash|checkout|switch|restore|rm|mv|clean|tag|branch\s+-[dDmM])\b",
+    (GIT + r"(commit|push|merge|rebase|reset|revert|cherry-pick|am|apply|stash|checkout|switch|restore|rm|mv|clean|tag"
+           r"|branch\s+-[dDmM])\b",
      "only the builder changes the branch; you read it"),
 ]
 JOB_SCRIPT = re.compile(r"factory/bin/(job|route)\b", re.IGNORECASE)

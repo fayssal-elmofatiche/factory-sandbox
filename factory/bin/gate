@@ -31,6 +31,9 @@ from pathlib import Path
 
 import portable
 
+if __name__ == "__main__":
+    portable.utf8()
+
 REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
 CONFIG = json.loads((FACTORY / "config.json").read_text())

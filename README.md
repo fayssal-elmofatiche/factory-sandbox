@@ -94,8 +94,7 @@ The design choices that carry the weight:
   the issue's wording didn't call for (`surface_paths`). The tables are in
   `factory/config.json`.
 - **Issue text is data.** Agents receive the issue title, text and comments as
-  quoted data and are told to ignore instructions inside them. An issue edited
-  after it was labeled is refused until the label is put on again.
+  quoted data and are told to ignore instructions inside them.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
   says what it may write, and a `PreToolUse` hook (`factory/bin/guard`) blocks
   the rest: other agents' files, `job.json`, `factory/bin/job`, pushes to the
@@ -105,7 +104,10 @@ The design choices that carry the weight:
 
 What this does not give you: a sandbox. Agents and the gate run on your
 machine, with your credentials, and a shell can be talked into a lot. The
-guard stops mistakes and obvious detours, not a determined attack. Use
+guard stops mistakes and obvious detours, not a determined attack. The gate
+runs the branch's own tests, and test code can print whatever it likes: the
+gate catches a branch that fails honestly, and the reviewers read the diff
+for one that cheats. Use
 `"auto_merge": false` until you trust it, and run it in a container when
 issues come from people you don't know. This is a demo
 and a design to learn from, not something to point at a production repository
@@ -128,6 +130,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx run [issue]` | Opens Claude Code on `/factory run` |
 | `./fx issues` | Lists the issues |
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
+| `./fx unqueue <issue>` | Takes that label off again |
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
@@ -219,12 +222,15 @@ on **dayahead** is still to do.
 The demo issues in `factory/demo-issues/` take the factory down every path.
 Queue one with `./fx queue <n>`; only issue 1 is queued at the start.
 
+These outcomes are what the issues and the agents' instructions are written
+to produce. A model decides at each step, so a run can differ.
+
 | # | Request | What should happen |
 |---|---------|--------------------|
 | 1 | Chart the day's hourly prices, with base and peak lines | Merges after UX, UI and security review |
 | 2 | A merit-order page per hour: supply and demand step chart, marginal order | Merges after a larger build, possibly in more than one round |
-| 3 | A form to place and withdraw bids and offers | Escalates: a new endpoint that changes orders, with no sign-in |
-| 4 | A CSV of accepted orders, with pro-rata fills at the clearing price | Escalates: an export of per-participant data |
+| 3 | A form to place and withdraw bids and offers | Built and reviewed, then the approver escalates: a new endpoint that changes orders, with no sign-in |
+| 4 | A CSV of accepted orders, with pro-rata fills at the clearing price | Built and reviewed, then the approver escalates: an export of per-participant data |
 | 5 | Block orders across several hours | Intake asks first: how blocks clear is a market-design decision |
 | 6 | A Telegram bot for crypto prices | Intake rejects it as out of scope |
 

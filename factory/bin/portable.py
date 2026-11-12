@@ -19,6 +19,25 @@ from pathlib import Path
 WINDOWS = os.name == "nt"
 
 
+def utf8():
+    """Run this script with text read and written as UTF-8.
+
+    Before Python 3.15, Windows reads and writes files, pipes and the console
+    in the ANSI code page (cp1252 on a Western machine). An issue with a curly
+    quote or an arrow in it then fails to decode, or is stored garbled. UTF-8
+    mode has to be on before Python starts, so start the script again with it.
+    The scripts it runs (checks.sh, the tests, the other factory scripts)
+    inherit the setting. Call this before anything else, and only when the
+    file runs as a script.
+    """
+    if WINDOWS and not sys.flags.utf8_mode:
+        os.environ["PYTHONUTF8"] = "1"
+        try:
+            sys.exit(subprocess.run([sys.executable, *sys.argv]).returncode)
+        except KeyboardInterrupt:
+            sys.exit(130)
+
+
 def script(path, *args):
     """The command line that runs one of the factory's Python scripts.
 

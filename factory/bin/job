@@ -50,6 +50,9 @@ from pathlib import Path
 
 import portable
 
+if __name__ == "__main__":
+    portable.utf8()
+
 REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
 JOBS = FACTORY / "jobs"
@@ -165,6 +168,7 @@ def kata_json(*args):
 
 COMMENT_RE = re.compile(r"^<!-- comment by (.+?) at (\S+) -->$", re.M)
 COMMENT_END = "<!-- /comment -->"
+COMMENT_END_RE = re.compile(r"^<!-- /comment -->$", re.M)
 MARKUP_RE = re.compile(r"^(<!-- comment by .+? at \S+ -->|<!-- /comment -->)$", re.M)
 
 
@@ -187,7 +191,10 @@ class FilesTracker:
         path = self.path(ref)
         if not path.exists():
             raise Refused(f"no issue {ref}: {path.relative_to(REPO).as_posix()} doesn't exist")
-        text = path.read_text()
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            raise Refused(f"{path.relative_to(REPO).as_posix()} can't be read as UTF-8 text: {e}") from None
         if not text.startswith("---\n") or "\n---\n" not in text[4:]:
             raise Refused(f"{path.relative_to(REPO).as_posix()} must start with a --- header block")
         head, _, rest = text[4:].partition("\n---\n")
@@ -201,7 +208,8 @@ class FilesTracker:
         comments = []
         for n, m in enumerate(heads):
             segment = rest[m.end():heads[n + 1].start() if n + 1 < len(heads) else len(rest)]
-            body, closed, tail = segment.partition(COMMENT_END)
+            end = COMMENT_END_RE.search(segment)  # on a line of its own; inline it is just text
+            body, closed, tail = (segment[:end.start()], True, segment[end.end():]) if end else (segment, False, "")
             comments.append({"author": m.group(1), "created": m.group(2), "body": body.strip()})
             if closed and tail.strip():  # typed by hand below a closed comment: the author's reply
                 stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -480,7 +488,16 @@ def save(job):
     path = job_dir(job["id"]) / "job.json"
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(job, indent=2) + "\n")
-    tmp.replace(path)
+    for attempt in range(20):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            # Windows refuses to replace a file another process has open, such as
+            # the dashboard's server reading it. That lasts milliseconds: try again.
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 def all_jobs():
@@ -1064,7 +1081,8 @@ def advance(job, stage, park=False):
         reseal(job)
 
     if stage == "needs-human":
-        body = f"### Factory: needs a human\n\n{(d / 'decision.md').read_text().split(chr(10), 1)[1].strip()}"
+        why = (d / "decision.md").read_text().partition("\n")[2].strip() or "(decision.md gives no reason)"
+        body = f"### Factory: needs a human\n\n{why}"
         post(job, body)
         label(job["issue"], add=LABELS["needs_human"])
 
@@ -1110,6 +1128,7 @@ def cmd_create(number):
         "intake": None, "agents": None, "gate": None, "reviews": {},
         "cost_usd": 0.0, "started": now(), "ended": None,
     }
+    save(job)  # first, so the folder never exists without its job.json
     write_issue_md(job)
     event(job, "create", issue=issue["number"])
     save(job)

@@ -50,7 +50,10 @@ AGENTS.md in the worktree, in the background, on your port.
 Then use the `agent-browser` CLI (run `agent-browser --help` first) to
 screenshot the page at desktop and phone widths. Pass `--session <job-id>-ui` on
 every `agent-browser` call, so other jobs' reviewers never drive your browser.
-Don't sign in or submit forms. When you're done, run
+This app's dev server is local and
+keeps its data in memory, so use its forms with made-up data when the change
+has one: submit a valid entry and an invalid one and look at both results.
+Don't sign in to, or submit anything to, a site that isn't this dev server. When you're done, run
 `agent-browser --session <job-id>-ui close` and stop the dev server. Stop only
 the server you started, by the PID listening on your port
 (`lsof -tiTCP:<port> -sTCP:LISTEN`); other jobs run dev servers too, so
