@@ -999,6 +999,23 @@ def add_acceptance_to_suite(job):
     git(job, "commit", "-q", "-m", f"Acceptance tests for {job['id']} (issue {job['issue']})")
 
 
+def drop_superseded_tests(job):
+    """After `job feedback --spec`: a failed merge may have left the old tests
+    committed as acceptance/test_<id>.py on the branch. The new ones differ, so
+    every later gate would fail on a guarded path the builder may not touch:
+    remove the file with a commit of its own and push the branch."""
+    rel = acceptance.kept_path(job["id"])
+    if not Path(job["worktree"]).exists():
+        return
+    git(job, "fetch", "origin", BASE, check=False)
+    on_tip = git(job, "cat-file", "-e", f"HEAD:{rel}", check=False).returncode == 0
+    on_base = git(job, "cat-file", "-e", f"origin/{BASE}:{rel}", check=False).returncode == 0
+    if on_tip and not on_base:
+        git(job, "rm", "-q", "--", rel)
+        git(job, "commit", "-q", "-m", f"Drop superseded acceptance tests for {job['id']}", "--", rel)
+        git(job, "push", "-q", "origin", f"HEAD:refs/heads/{job['branch']}")
+
+
 def advance(job, stage, park=False, respec=False):
     old = job["stage"]
     require(stage in TRANSITIONS.get(old, set()) or (stage == "merged" and old not in TERMINAL)
@@ -1184,6 +1201,10 @@ def advance(job, stage, park=False, respec=False):
                     archive(job, "spec.md")
                     archive(job, acceptance.NAME)
                     job["round_limit"] = job["round"] + CONFIG["max_rounds"]
+                    drop_superseded_tests(job)
+                # Nothing gated under the old tests may be approved or merged.
+                for key in ("gated_sha", "synced_sha", "built_sha", "approved_decision"):
+                    job[key] = None
             else:
                 require(origin not in {"intake", "spec"},
                         f"this job was parked during {origin}: `job feedback` resumes it there")

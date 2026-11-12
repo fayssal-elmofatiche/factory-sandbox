@@ -1393,3 +1393,101 @@ def test_spec_to_build_refuses_acceptance_tests_ruff_rejects(sb):
     res = sb.job("advance", job_id, "build", check=False)
     assert res.returncode == 1 and "F401" in res.stderr, res.stderr
     assert sb.state(job_id)["stage"] == "spec"
+
+
+# Passes until the base gains a line with "zebra" in README.md.
+NO_ZEBRA = ('def test_ac1_readme_has_no_zebra():\n    """AC1."""\n    from pathlib import Path\n\n'
+            '    assert "zebra" not in Path("README.md").read_text()\n')
+
+
+def failed_merge_gate(sb):
+    """A job whose merge gate failed after `job merge` committed its acceptance tests."""
+    job_id = sb.to_approved(acceptance=NO_ZEBRA)
+    sb.move_base(text="\nzebra\n")
+    sb.job("merge", job_id, check=False)
+    s = sb.state(job_id)
+    assert s["stage"] == "needs-human" and not s.get("merge_failed")
+    assert sh(["git", "ls-files", kept(job_id)], sb.wt(job_id)).stdout.strip() == kept(job_id)
+    return job_id
+
+
+def test_respec_drops_the_superseded_acceptance_tests_from_the_branch(sb):
+    job_id = failed_merge_gate(sb)
+    sb.job("feedback", job_id, "--spec", stdin="the tests read the wrong file")
+    wt = sb.wt(job_id)
+    assert sh(["git", "ls-files", kept(job_id)], wt).stdout == ""
+    assert sh(["git", "log", "-1", "--format=%s"], wt).stdout.strip() == \
+        f"Drop superseded acceptance tests for {job_id}"
+    head = sh(["git", "rev-parse", "HEAD"], wt).stdout.strip()
+    remote = sh(["git", "ls-remote", str(sb.origin), f"refs/heads/factory/{job_id}"], wt).stdout
+    assert remote.startswith(head)
+    sb.spec(job_id, PASSING)
+    sb.job("advance", job_id, "build")
+    res = gate_after(sb, job_id, text="# round 2\n")
+    assert res.returncode == 0, res.stdout
+
+
+def test_respec_leaves_a_branch_without_committed_tests_alone(sb):
+    job_id = escalated(sb)
+    wt = sb.wt(job_id)
+    before = sh(["git", "rev-parse", "HEAD"], wt).stdout
+    sb.job("feedback", job_id, "--spec", stdin="the tests are wrong")
+    assert sh(["git", "rev-parse", "HEAD"], wt).stdout == before
+
+
+def test_approve_after_respec_is_refused_until_a_new_round_passes_the_gate(sb):
+    job_id = escalated(sb)
+    sb.job("feedback", job_id, "--spec", stdin="the tests are wrong")
+    s = sb.state(job_id)
+    for key in ("gated_sha", "synced_sha", "built_sha", "human_approved", "approved_decision"):
+        assert not s.get(key), key
+    sb.job("park", job_id, stdin="spec writer stuck")
+    res = sb.job("approve", job_id, check=False)
+    assert res.returncode == 1 and "passed the gate" in res.stderr
+    assert sb.state(job_id)["stage"] == "needs-human"
+    suite = sh(["git", "ls-tree", "-r", "--name-only", "origin/main", "acceptance"], sb.repo).stdout
+    assert "test_" not in suite
+
+
+def test_respec_after_a_failed_merge_clears_the_retry(sb):
+    job_id = escalated(sb)
+    hook = sb.origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nwhile read old new ref; do\n"
+                    "[ \"$ref\" = refs/heads/main ] && exit 1\ndone\nexit 0\n")
+    hook.chmod(0o755)
+    sb.job("approve", job_id, check=False)
+    hook.unlink()
+    sb.job("feedback", job_id, "--spec", stdin="respec")
+    s = sb.state(job_id)
+    assert s["stage"] == "spec" and not s["human_approved"] and not s["merge_failed"]
+
+
+def test_a_high_risk_job_a_person_approves_gets_its_acceptance_tests_once(sb):
+    job_id = sb.to_approved(risk="high")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert sh(["git", "ls-files", kept(job_id)], sb.wt(job_id)).stdout == ""
+    sb.move_base()
+    sb.job("approve", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+    assert sb.base_file(kept(job_id)) == PASSING
+    log = sh(["git", "log", "--format=%s", "origin/main"], sb.repo).stdout
+    assert log.count(f"Acceptance tests for {job_id}") == 1
+
+
+def test_a_job_sealed_before_acceptance_tests_existed_still_merges(sb):
+    job_id = sb.to_build()
+    d = sb.dir(job_id)
+    s = json.loads((d / "job.json").read_text())
+    s["files"].pop("acceptance.py")
+    (d / "job.json").write_text(json.dumps(s))
+    (d / "acceptance.py").unlink()
+    res = gate_after(sb, job_id)
+    assert res.returncode == 0, res.stdout
+    assert "this job has none" in (d / "round-1" / "checks.md").read_text()
+    sb.job("advance", job_id, "review")
+    sb.review(job_id)
+    sb.job("advance", job_id, "approve")
+    sb.decide(job_id)
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
