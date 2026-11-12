@@ -262,7 +262,7 @@ def test_reset_and_baseline_refuse_a_repository_that_is_not_a_local_sandbox(tmp_
     before = run(["git", "rev-parse", "HEAD"], cwd=REPO).stdout
     for command in (["reset", "--yes"], ["baseline"]):
         res = run(["./fx", *command], cwd=clone, check=False)
-        assert res.returncode != 0 and "local sandbox" in res.stderr
+        assert res.returncode != 0 and "set up" in res.stderr
     assert run(["git", "rev-parse", "HEAD"], cwd=REPO).stdout == before
 
 
@@ -270,7 +270,43 @@ def test_reset_refuses_a_files_tracker_whose_origin_is_a_working_checkout(sandbo
     clone = tmp_path / "clone-of-sandbox"  # tracker files, but origin is the sandbox's checkout
     run(["git", "clone", "-q", str(sandbox), str(clone)], cwd=tmp_path)
     res = run(["./fx", "reset", "--yes"], cwd=clone, check=False)
-    assert res.returncode != 0 and "working checkout" in res.stderr
+    assert res.returncode != 0 and "set up" in res.stderr
+
+
+def fresh_clone(tmp_path, name="clone"):
+    """A clone on main of this working tree's fx and factory, as a learner gets it from GitHub."""
+    clone = tmp_path / name
+    run(["git", "clone", "-q", "--no-checkout", str(REPO), str(clone)], cwd=tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=REPO).stdout.strip()
+    run(["git", "checkout", "-q", "-B", "main", head], cwd=clone)
+    run(["git", *GIT_ID, "config", "user.name", "fx test"], cwd=clone)
+    run(["git", "config", "user.email", "fx@test.invalid"], cwd=clone)
+    return clone
+
+
+def test_setup_makes_the_clone_its_own_sandbox(tmp_path):
+    clone = fresh_clone(tmp_path)
+    came_from = run(["git", "remote", "get-url", "origin"], cwd=clone).stdout.strip()
+    out = fx(clone, "setup").stdout
+    assert "upstream" in out and "origin" in out and "demo issues" in out
+    origin = Path(run(["git", "remote", "get-url", "origin"], cwd=clone).stdout.strip())
+    assert origin.resolve() == (tmp_path / "clone.git").resolve()
+    bare = run(["git", "-C", str(origin), "rev-parse", "--is-bare-repository"], cwd=tmp_path).stdout
+    assert bare.strip() == "true"
+    assert run(["git", "remote", "get-url", "upstream"], cwd=clone).stdout.strip() == came_from
+    assert sorted(x.name for x in (clone / "factory" / "issues").glob("*.md")) == ["1.md", "2.md", "3.md"]
+    assert "new\t1\t" in fx(clone, "status").stdout
+    assert "Already set up" in fx(clone, "setup").stdout  # a second run changes nothing
+    assert "Starting point" in fx(clone, "baseline").stdout  # fx reset and baseline accept it
+
+
+def test_doctor_reports_the_setup_and_changes_nothing(tmp_path):
+    clone = fresh_clone(tmp_path)
+    before = run(["git", "remote", "-v"], cwd=clone).stdout
+    out = fx(clone, "doctor", check=False).stdout
+    assert "local setup" in out and "not yet" in out
+    assert run(["git", "remote", "-v"], cwd=clone).stdout == before
+    assert not (tmp_path / "clone.git").exists() and not (clone / "factory" / "issues").exists()
 
 
 # ---- a person's decisions ------------------------------------------------------

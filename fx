@@ -56,7 +56,7 @@ def config():
 
 
 def tracker():
-    return config().get("tracker", "github")
+    return config().get("tracker", "files")
 
 
 def state_dir():
@@ -122,19 +122,14 @@ def cmd_doctor():
 
     t = tracker()
     rows.append(("ok", "tracker", t))
-    if t == "github":
-        if not have("gh"):
-            rows.append(("MISSING", "gh", "install the GitHub CLI"))
-        else:
-            auth = sh("gh", "auth", "status").returncode == 0
-            rows.append(("ok" if auth else "MISSING", "gh signed in", "" if auth else "run: gh auth login"))
-    elif t == "kata":
+    if t == "kata":
         rows.append(("ok" if have("kata") else "MISSING", "kata",
                      "" if have("kata") else "go install go.kenn.io/kata/cmd/kata@latest"))
 
-    remote = sh("git", "remote", "get-url", "origin")
-    rows.append(("ok" if remote.returncode == 0 else "MISSING", "git remote origin",
-                 remote.stdout.strip() if remote.returncode == 0 else "the factory branches every job from origin"))
+    # doctor only looks; ./fx run (or ./fx setup) does the setting up.
+    origin = local_origin()
+    rows.append(("ok" if is_set_up() else "warn", "local setup",
+                 f"origin is {origin}" if is_set_up() else "not yet: ./fx run sets this checkout up (or ./fx setup)"))
 
     tools = [("agent-browser", "needed for issues that change the web page")]
     bash = "bash"
@@ -277,6 +272,8 @@ def cmd_deck():
 def cmd_run(args):
     if not shutil.which("claude"):
         die("Claude Code is not installed; run ./fx doctor")
+    if not is_set_up():
+        cmd_setup(quiet=True)
     prompt = "/factory run" + (f" {args[0]}" if args else "")
     print(f"Starting Claude Code in {REPO} with: {prompt}")
     os.chdir(REPO)
@@ -380,14 +377,9 @@ def cmd_approve(args):
 def local_sandbox():
     """Refuse anything that is not a local demo sandbox, and say why."""
     if tracker() != "files":
-        die("this works only in a local sandbox whose tracker is files (see docs/local-mode.md)")
-    url = sh("git", "remote", "get-url", "origin", check=True).stdout.strip()
-    if re.match(r"^(https?://|ssh://|git@|git://)", url) or not Path(url).exists():
-        die(f"origin is {url}, not a folder on this machine; this works only in a local sandbox")
-    # local-setup.sh gives a sandbox a bare origin. A clone of somebody's checkout has a
-    # working repository as its origin, and that is not ours to rewrite.
-    if sh("git", "-C", url, "rev-parse", "--is-bare-repository").stdout.strip() != "true":
-        die(f"origin ({url}) is a working checkout, not the bare repository of a local sandbox")
+        die("this works only with the files tracker (see docs/local-mode.md)")
+    if not local_origin():
+        die("this checkout isn't set up to run the factory yet; run ./fx setup (./fx run does it too)")
     return config()["base_branch"]
 
 
@@ -418,6 +410,78 @@ def dirty(outside_setup_only=False):
     if outside_setup_only:
         paths = [x for x in paths if not any(x == s or x.startswith(s + "/") for s in SETUP)]
     return paths
+
+
+def local_origin():
+    """The repository on disk that plays `origin`, or None while origin is elsewhere."""
+    res = sh("git", "remote", "get-url", "origin")
+    url = res.stdout.strip()
+    if res.returncode != 0 or re.match(r"^(https?://|ssh://|git@|git://)", url) or not Path(url).exists():
+        return None
+    if sh("git", "-C", url, "rev-parse", "--is-bare-repository").stdout.strip() != "true":
+        return None
+    return url
+
+
+def is_set_up():
+    issues = FACTORY / "issues"
+    return bool(local_origin()) and (tracker() != "files" or (issues.exists() and any(issues.glob("*.md"))))
+
+
+def cmd_setup(quiet=False):
+    """Make this checkout its own sandbox: a repository on disk next to it plays
+    `origin`, the demo issues go into factory/issues/, and the starting point for
+    `fx reset` is recorded. Running it again changes nothing."""
+    base = config()["base_branch"]
+    done = []
+    if not local_origin():
+        if sh("git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != base:
+            die(f"switch to {base} first: the factory starts every job from {base}")
+        # A commit needs an author; fall back to a local one on a machine with none set.
+        for key, value in (("user.name", os.environ.get("USER") or os.environ.get("USERNAME") or "factory"),
+                           ("user.email", "factory@localhost")):
+            if sh("git", "config", key).returncode != 0:
+                sh("git", "config", key, value, check=True)
+        bare = REPO.parent / f"{REPO.name}.git"
+        old = sh("git", "remote", "get-url", "origin")
+        if old.returncode == 0:
+            # Keep the place this checkout came from as `upstream`, for course updates.
+            if sh("git", "remote", "get-url", "upstream").returncode == 0:
+                sh("git", "remote", "remove", "origin", check=True)
+            else:
+                sh("git", "remote", "rename", "origin", "upstream", check=True)
+                done.append(f"upstream    {old.stdout.strip()} (where this checkout came from)")
+        if bare.exists():
+            if sh("git", "-C", str(bare), "rev-parse", "--is-bare-repository").stdout.strip() != "true":
+                die(f"{bare} exists and is not a bare repository; move it away and run ./fx setup again")
+        else:
+            sh("git", "init", "--quiet", "--bare", str(bare), check=True)
+            sh("git", "-C", str(bare), "symbolic-ref", "HEAD", f"refs/heads/{base}", check=True)
+        sh("git", "remote", "add", "origin", bare.as_posix(), check=True)
+        sh("git", "push", "--quiet", "origin", f"HEAD:refs/heads/{base}", check=True)
+        sh("git", "fetch", "--quiet", "origin", check=True)
+        sh("git", "branch", "--quiet", f"--set-upstream-to=origin/{base}", base, check=True)
+        done.append(f"origin      {bare.as_posix()} (a repository on disk; the factory merges here)")
+    issues = FACTORY / "issues"
+    if tracker() == "files" and not (issues.exists() and any(issues.glob("*.md"))):
+        issues.mkdir(parents=True, exist_ok=True)
+        for demo in sorted((FACTORY / "demo-issues").glob("*.md")):
+            shutil.copy2(demo, issues / demo.name)
+        done.append(f"issues      {len(list(issues.glob('*.md')))} demo issues in factory/issues/")
+    if tracker() == "files" and not has_tag(TAG) and not dirty():
+        sh("git", "tag", "-f", TAG, check=True)
+        snapshot("baseline")
+        if not has_tag(ORIGIN_TAG):
+            sh("git", "tag", ORIGIN_TAG, check=True)
+            snapshot("origin")
+        done.append("start       recorded; ./fx reset returns here")
+    if not quiet or done:
+        print("This checkout runs the factory locally." if done else "Already set up: this checkout runs the factory locally.")
+        for line in done:
+            print(f"  {line}")
+        if done:
+            print()
+    return 0
 
 
 def cmd_baseline():
@@ -561,7 +625,7 @@ CONFIG_KEYS = {
 def cmd_config(args):
     cfg = config()
     if not args:
-        print(f"  tracker        {cfg.get('tracker', 'github')}")
+        print(f"  tracker        {cfg.get('tracker', 'files')}")
         for key in ("concurrency", "max_rounds", "merge_method"):
             print(f"  {key:<14} {cfg[key]}")
         for risk, reviewers in cfg["routing"].items():
@@ -638,6 +702,11 @@ Run `fx <command> --help` for the details of one command."""
 
 # name, one-line help, longer description (None = the one-liner)
 COMMANDS = [
+    ("setup", "set this checkout up to run the factory locally",
+     "Makes this checkout its own sandbox: a repository on disk next to it becomes `origin`\n"
+     "(where the factory merges), the one it came from becomes `upstream`, the demo issues go\n"
+     "into factory/issues/, and the starting point for `fx reset` is recorded. `fx run` does\n"
+     "this the first time; running it again changes nothing."),
     ("doctor", "check that this machine can run the factory",
      "Checks Python, git, pytest, ruff, the Claude Code version, the tracker's tool, the\n"
      "optional browser tools and whether factory/checks.sh passes. Exits 1 if something\n"
@@ -718,6 +787,8 @@ def build_parser():
 
 def dispatch(ns):
     cmd = ns.command
+    if cmd == "setup":
+        return cmd_setup()
     if cmd == "doctor":
         return cmd_doctor()
     if cmd == "up":

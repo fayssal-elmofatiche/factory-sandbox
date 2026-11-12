@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Factory step 3. Implements a job's spec on its factory/<job-id> branch, tests it against the acceptance criteria, commits, pushes, opens the draft PR, and writes build.md. Resumed with SendMessage for each new round.
+description: Factory step 3. Implements a job's spec on its factory/<job-id> branch, tests it against the acceptance criteria, commits, pushes the branch, and writes build.md. Resumed with SendMessage for each new round.
 tools: Read, Grep, Glob, Bash, Edit, Write
 model: opus
 hooks:
@@ -98,28 +98,17 @@ command you ran and its result, or what the page showed.
 (don't grep for LISTENING: Windows translates it) and `taskkill //PID <pid> //T //F` stops it.
 Run the netstat line again afterwards: it must print nothing.
 
-## Commit, push, PR
+## Commit and push
 
 - Commit on the job branch with short one-line messages in the style of
   `git log --oneline`. One commit per distinct piece of work.
 - Stage explicit paths, never `git add -A`. Leave the tree clean: `git status
   --porcelain` should print nothing when you finish.
 - Push with `git push -u origin <branch>`. Push only the job branch, never
-  anything else.
-- After the first push, open the change request with the factory's script,
-  your Summary on stdin:
-
-  ```bash
-  <main checkout>/factory/bin/job open-change <job id> "<spec title>" <<'EOF'
-  <your Summary bullets>
-  EOF
-  ```
-
-  It opens a draft pull request that closes the issue, says so if one is
-  already open, and does nothing on the local host, where there are no pull
-  requests and the factory merges the branch itself. Once it exists, just
-  push; the PR updates itself. This is the only `factory/bin/job` command you
-  run. Never run `gh` yourself, never mark a PR ready and never merge.
+  anything else. `origin` is a repository on disk; the factory merges the
+  branch there once the job is approved.
+- Never merge, and never run `factory/bin/job` or `factory/bin/route`: the
+  orchestrator moves the job's state.
 
 ## Write build.md
 

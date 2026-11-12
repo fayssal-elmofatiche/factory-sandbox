@@ -17,23 +17,28 @@ reviewers in and out. It is a single file and works offline.
 
 ## Quick start
 
-The fastest way to see it run is the local mode, which needs no GitHub account:
-
 ```bash
 git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
 cd factory-sandbox
-factory/local-setup.sh ~/factory-demo
-cd ~/factory-demo
-./fx doctor     # check this machine can run the factory
-./fx deck       # open the presentation, to show what the factory does
-./fx up         # start the dashboard and open it
-./fx run        # open Claude Code on /factory run
+./fx doctor   # check this machine
+./fx deck     # the presentation
+./fx up       # the dashboard
+./fx run      # sets the checkout up the first time, then Claude Code on /factory run
 ```
+
+On Windows PowerShell, use `.\fx.cmd` instead of `./fx`.
+
+Everything runs on your machine. Issues are Markdown files in
+`factory/issues/`, and `origin` is a repository on disk next to the checkout,
+where the factory merges. The first `./fx run` sets this up (`./fx setup` does
+the same by hand); the place you cloned from becomes the remote `upstream`,
+and `git pull upstream main` brings in course updates.
 
 You need git, Python 3.10+ with pytest and ruff, and Claude Code 2.1.257 or
 later on a plan that includes Fable. `./fx doctor` checks all of that and says
 what is missing. The scripts are tested on macOS, Ubuntu and Windows, natively or
-in WSL. See [docs/local-mode.md](docs/local-mode.md) for the Windows steps.
+in WSL. See [docs/local-mode.md](docs/local-mode.md) for the setup and the
+Windows steps.
 
 ## How it works
 
@@ -52,7 +57,7 @@ intake → route → spec → build → gate → review → approve → merge
 | gate    | `factory/bin/gate` script  | the result of `factory/checks.sh` and a protected-paths check |
 | review  | routed agents              | code, security, UX and UI reviews, as risk and the diff demand |
 | approve | agent                      | approve, or hand the decision to a person               |
-| merge   | `factory/bin/job` script   | sync with `main`, run the gate again, merge             |
+| merge   | `factory/bin/job` script   | sync with `main`, gate again, merge, close the issue    |
 
 Three kinds of actor are involved:
 
@@ -89,7 +94,8 @@ The design choices that carry the weight:
   after it was labeled is refused until the label is put on again.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
   says what it may write, and a `PreToolUse` hook (`factory/bin/guard`) blocks
-  the rest: other agents' files, `job.json`, pushes to the base, `gh pr merge`.
+  the rest: other agents' files, `job.json`, `factory/bin/job`, pushes to the
+  base.
   Claude Code runs that hook only in a folder you have trusted (the prompt it
   shows the first time you open `claude` there); `./fx doctor` checks it.
 
@@ -110,6 +116,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 
 | Command | What it does |
 | --- | --- |
+| `./fx setup` | Sets this checkout up: `origin` on disk, the demo issues, the starting point. `./fx run` does it the first time |
 | `./fx doctor` | Checks the prerequisites and whether the checks pass |
 | `./fx up` | Starts the dashboard on a free local port and opens it |
 | `./fx down` | Stops the dashboard |
@@ -127,7 +134,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx retry <job>` | Tries a failed merge again |
 | `./fx park <job>` | Stops a running job that is stuck |
 | `./fx baseline` | Marks the current state as a demo's starting point |
-| `./fx reset` | Discards the work in a local sandbox and keeps your setup changes |
+| `./fx reset` | Discards the work and keeps your setup changes |
 | `./fx reset --setup` | Also discards the setup changes: back to how the sandbox was made |
 
 The factory itself runs inside a Claude Code session that you watch. `./fx run`
@@ -136,7 +143,7 @@ unattended.
 
 ### Trying a different setup
 
-A local sandbox is made for experiments. Change the setup, run, reset, and run
+The sandbox is made for experiments. Change the setup, run, reset, and run
 again:
 
 ```bash
@@ -148,28 +155,28 @@ again:
 `./fx reset` treats two things differently. The work (jobs, branches, merged
 changes, the state of the issues) is discarded. The setup (`factory/config.json`,
 `factory/checks.sh`, `.claude/` and `AGENTS.md`) is kept and becomes part of
-the new starting point. It works only in a local sandbox, lists what it will
-delete and asks before it does.
+the new starting point. It lists what it will delete and asks before it does.
 
-## Running it on GitHub
+## Running it
 
-You need the GitHub CLI (`gh`) signed in with push access, and a fork or copy
-of this repo. Label an issue `factory`, then:
+Label an issue `factory` (`./fx queue <issue>`), then:
 
 ```bash
 ./fx run          # every open issue labeled factory
 ./fx run 1        # one issue
 ```
 
-Every job opens one pull request, and the approver merges what it approves.
-Job files are written to `factory/jobs/<job-id>/` (gitignored). Configuration
-is in `factory/config.json`, and the checks the gate runs are in
+Every job works on one branch, and the factory merges what the approver
+approves into `main` on `origin` and closes the issue. Your own checkout stays
+where it was; `git pull` shows the merged work. Job files are written to
+`factory/jobs/<job-id>/` (gitignored). Configuration is in
+`factory/config.json`, and the checks the gate runs are in
 `factory/checks.sh`.
 
 The factory spawns background agents that run shell commands. With Claude
 Code's default permissions you approve each new kind of command once, in the
 main session; `.claude/settings.json` denies the few things nobody should do
-(merging a PR by hand, pushing to `main`, editing `job.json`).
+(pushing to `main`, force pushes, editing `job.json`).
 
 When a job lands in the dashboard's "Needs human" column, open its card: it
 shows why, and the commands for your options with a copy button each.
@@ -184,35 +191,24 @@ shows why, and the commands for your options with a copy button each.
 
 Approving never skips the checks. `fx approve` only takes a job whose tip is a
 commit the gate has passed, syncs it with `main`, runs the gate again and
-merges. On GitHub you can still approve by merging the pull request yourself.
+merges.
 
 The factory's own scripts have tests: `python3 -m pytest factory/tests -q`.
 Run them, and `bash factory/checks.sh`, before merging a change to the factory itself.
 
-## Running it without GitHub
-
-In local mode issues are Markdown files in `factory/issues/`, there are no pull
-requests, and `origin` is a folder on disk. The factory merges a job's branch
-itself after the gate has passed again.
-
-```bash
-factory/local-setup.sh ~/factory-demo
-```
-
-The setup adds three demo issues, one of them queued, and records the starting
-point so `./fx reset` can return to it after a rehearsal. See
-[docs/local-mode.md](docs/local-mode.md) for what changes in the pipeline.
+`./fx setup` adds three demo issues, one of them queued, and records the
+starting point so `./fx reset` can return to it after a rehearsal. For a
+second, separate copy, `factory/local-setup.sh <dir>` clones this checkout and
+sets the copy up. See [docs/local-mode.md](docs/local-mode.md).
 
 ## Example run
 
 The first run was on the toy app this repo had before **dayahead**, an
-event-registration app. Issue
-[#1](https://github.com/fayssal-elmofatiche/factory-sandbox/issues/1)
-asked for a way to look up an attendee's waitlist position. The factory accepted
-it as low risk, routed it to a single code reviewer, passed the gate on the branch
-and again after syncing with `main`, and merged
-[PR #6](https://github.com/fayssal-elmofatiche/factory-sandbox/pull/6): one
-method and eight tests, for about $1 in model usage. `OrderBook.merit_order_rank`
+event-registration app. Issue 1 asked for a way to look up an attendee's
+waitlist position. The factory accepted it as low risk, routed it to a single
+code reviewer, passed the gate on the branch and again after syncing with
+`main`, and merged it: one method and eight tests, for about $1 in model
+usage. `OrderBook.merit_order_rank`
 in **dayahead** is the same kind of change, carried over by hand; a factory run
 on **dayahead** is still to do.
 
@@ -251,12 +247,11 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
 - The toy app (November 2026): **dayahead**, a day-ahead power auction,
   replaced the earlier event-registration app.
 - `factory/checks.sh` runs ruff and pytest.
-- Trackers and hosts (November 2026): `factory/bin/job` talks to issues and
-  to the code host through two small adapter sets, picked by `tracker`
-  (`github`, `files`, `kata`) and `host` (`github`, `local`) in
-  `config.json`. No prompt names `gh` any more: the orchestrator and the
-  builder use `job answer`, `new-issue`, `issues`, `label`, `unlabel` and
-  `open-change`.
+- Local only (November 2026): issues live in `factory/issues/` (or in kata,
+  picked by `tracker` in `config.json`), and `origin` is a repository on disk
+  where the factory merges approved branches itself. The orchestrator uses
+  `job answer`, `new-issue`, `issues`, `label` and `unlabel`; the builder only
+  pushes its branch.
 - Hardening after a review of this repo (November 2026): commit pinning,
   sealed files and `events.jsonl`; guarded paths, a timeout, and checks that
   fail on skipped or removed tests; one lock for the whole factory; `job park`,
@@ -265,8 +260,8 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   model no longer stops a job; an optional `factory/worktree-setup.sh` that
   prepares each job's worktree (env files, test credentials); tests in
   `factory/tests/`.
-- `factory/local-setup.sh` creates a local sandbox, and `fx` wraps the common
-  commands.
+- `fx` wraps the common commands, and `./fx setup` makes a clone its own
+  sandbox; `factory/local-setup.sh` makes an extra copy.
 - `factory/dashboard.html`: reviewer chips show the model each reviewer runs
   on; cards show a merge commit, a quiet timer and an incomplete cost.
   A summary strip shows the factory as a whole: requests by outcome, estimated

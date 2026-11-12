@@ -9,13 +9,9 @@ it and refuses anything else. Tracker and host side effects that belong to a
 transition (labels, comments, the worktree, the merge) happen here too, so the
 orchestrator never improvises them.
 
-Two settings in config.json pick the outside world:
-  tracker   where issues live: github (default), files (Markdown files in
+One setting in config.json picks the outside world:
+  tracker   where issues live: files (default; Markdown files in
             factory/issues/) or kata
-  host      where code is merged: github (pull requests, through `gh`) or
-            local (no pull requests: `job merge` merges the branch into the
-            base itself and pushes to origin). Defaults to github with the
-            github tracker and to local otherwise.
 
 Usage:
   job queue                      what /factory run should do with each labeled issue
@@ -28,17 +24,16 @@ Usage:
   job park <job>                 any running stage → needs-human, with your reason (stdin)
   job show <job>                 what a person needs to decide on a job: stage, decision, diff, next commands
   job mark-merged <job> <sha>    local host: record a merge a person made by hand (squash, rebase)
-  job open-change <job> <title>  builder: open the draft pull request, body on stdin (no-op on the local host)
   job agents <job> <json>        record the routed agent set (called by factory/bin/route)
   job sync <job>                 refresh reviews, gate and cost from the job's files
-  job summary [<job>...]         table of jobs: issue, stage, PR, cost, time
+  job summary [<job>...]         table of jobs: issue, stage, round, cost, time
   job answer <job>               post the author's answer (stdin) on the job's issue
   job new-issue <title>          file a new `factory` issue with the body on stdin; prints its ref
   job issues                     list every issue: ref, state, labels, title
   job label <issue> <label>      add a label to an issue (`factory` queues it)
   job unlabel <issue> <label>    remove a label from an issue
 
-<job> is a job id (004-dark-mode) or an issue ref (12 on GitHub or with files, a short id like 2f2b in kata).
+<job> is a job id (004-dark-mode) or an issue ref (12 with files, a short id like 2f2b in kata).
 """
 
 import fnmatch
@@ -129,14 +124,6 @@ def require(cond, msg):
         raise Refused(msg)
 
 
-def gh(*args):
-    return run(["gh", *args]).stdout
-
-
-def gh_json(*args):
-    return json.loads(gh(*args))
-
-
 def kata(*args):
     return run(["kata", *args]).stdout
 
@@ -147,7 +134,7 @@ def kata_json(*args):
 
 # ---- Trackers: where issues live -------------------------------------------
 #
-# A tracker answers in GitHub's shape, whichever system holds the issue:
+# A tracker answers in one shape, whichever system holds the issue:
 #   get(ref)     {number, title, body, author{login}, state (OPEN|...), url,
 #                 labels[{name}], comments[{author{login}, body, createdAt}]}
 #   queued()     open issues carrying the queue label, oldest first: [{number, title}]
@@ -155,62 +142,6 @@ def kata_json(*args):
 #   comment, label, close, create, whoami, edited_after_label
 # To add one (GitLab, Jira, ...), write a class with these methods and name it
 # in TRACKERS.
-
-
-class GitHubTracker:
-    source = "GitHub"
-    numeric = True
-
-    def whoami(self):
-        return gh("api", "user", "--jq", ".login").strip()
-
-    def get(self, ref):
-        return gh_json("issue", "view", str(ref), "--json",
-                       "number,title,body,author,labels,state,url,comments")
-
-    def queued(self):
-        issues = gh_json("issue", "list", "--label", LABELS["queue"], "--state", "open",
-                         "--limit", "200", "--json", "number,title")
-        return sorted(issues, key=lambda i: i["number"])
-
-    def rows(self):
-        issues = gh_json("issue", "list", "--state", "all", "--limit", "200", "--json", "number,title,state,labels")
-        return [(i["number"], i["state"].lower(), [x["name"] for x in i["labels"]], i["title"])
-                for i in sorted(issues, key=lambda i: i["number"])]
-
-    def comment(self, ref, text):
-        gh("issue", "comment", str(ref), "--body", text)
-
-    def label(self, ref, add=(), remove=()):
-        args = ["issue", "edit", str(ref)]
-        if add:
-            args += ["--add-label", ",".join(add)]
-        if remove:
-            args += ["--remove-label", ",".join(remove)]
-        gh(*args)
-
-    def close(self, ref, note, sha):
-        gh("issue", "close", str(ref), "--comment", f"{MARKER}\n### Factory: merged\n\n{note}")
-
-    def create(self, title, body):
-        url = gh("issue", "create", "--label", LABELS["queue"], "--title", title, "--body", body).strip()
-        return url.rsplit("/", 1)[-1]
-
-    def edited_after_label(self, ref):
-        """True when the issue body was edited after the queue label went on.
-        The label is a person saying "build this text"; a later edit by the
-        author is text nobody approved."""
-        query = ("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){"
-                 "issue(number:$number){lastEditedAt timelineItems(itemTypes:[LABELED_EVENT],last:50){"
-                 "nodes{... on LabeledEvent{createdAt label{name}}}}}}}")
-        issue = gh_json("api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", f"number={ref}",
-                        "-f", f"query={query}")["data"]["repository"]["issue"]
-        edited = issue["lastEditedAt"]
-        if not edited:
-            return False
-        labeled = [n["createdAt"] for n in issue["timelineItems"]["nodes"]
-                   if n and n.get("label", {}).get("name") == LABELS["queue"]]
-        return not labeled or edited > max(labeled)
 
 
 # The files tracker: factory/issues/<n>.md
@@ -411,8 +342,6 @@ class KataTracker:
 
 # ---- Hosts: where code is merged -------------------------------------------
 #
-#   find_change(job)        build → gate: the change request must exist; record it
-#   open_change(job, t, b)  the builder's draft pull request
 #   landed(job)             is the job's work on the base branch?
 #   comment(job, text)      post on the change request; False when there is none
 #   close(job)              a rejected job's change request
@@ -421,75 +350,7 @@ class KataTracker:
 #   where(job)              what a person merges to approve by hand
 
 
-class GitHubHost:
-    local = False
-
-    def find_change(self, job):
-        if job["pr"]:
-            return
-        prs = gh_json("pr", "list", "--head", job["branch"], "--state", "open", "--json", "number,url")
-        require(len(prs) == 1, f"expected one open PR from {job['branch']}, found {len(prs)}")
-        job["pr"], job["pr_url"] = prs[0]["number"], prs[0]["url"]
-
-    def open_change(self, job, title, body):
-        prs = gh_json("pr", "list", "--head", job["branch"], "--state", "open", "--json", "number,url")
-        if prs:
-            return f"PR #{prs[0]['number']} is already open: {prs[0]['url']}"
-        closes = f"Closes #{job['issue']}" if TRACKER_NAME == "github" else f"Issue {job['issue']}"
-        url = gh("pr", "create", "--draft", "--base", BASE, "--head", job["branch"],
-                 "--title", title, "--body", f"{closes}\n\n{scrub(body)}").strip()
-        return f"opened {url}"
-
-    def state(self, job):
-        return gh_json("pr", "view", str(job["pr"]), "--json", "state")["state"]
-
-    def landed(self, job):
-        return bool(job["pr"]) and self.state(job) == "MERGED"
-
-    def ready(self, job):
-        if gh_json("pr", "view", str(job["pr"]), "--json", "isDraft")["isDraft"]:
-            gh("pr", "ready", str(job["pr"]))
-
-    def comment(self, job, text):
-        if not job["pr"]:
-            return False
-        self.ready(job)
-        gh("pr", "comment", str(job["pr"]), "--body", text)
-        return True
-
-    def close(self, job):
-        if job["pr"]:
-            gh("pr", "close", str(job["pr"]))
-            run(["git", "push", "origin", "--delete", job["branch"]], check=False)
-
-    def merge(self, job):
-        self.ready(job)
-        method = f"--{CONFIG['merge_method']}"
-        try:
-            gh("pr", "merge", str(job["pr"]), method)
-        except Refused as first:
-            # Required checks or approvals are still open: ask GitHub to merge
-            # when they pass. If the repo doesn't allow that, the first error stands.
-            try:
-                gh("pr", "merge", str(job["pr"]), "--auto", method)
-            except Refused:
-                raise first from None
-            return "waiting"
-        return "merged"
-
-    def where(self, job):
-        return f"PR #{job['pr']}" if job["pr"] else None
-
-
 class LocalHost:
-    local = True
-
-    def find_change(self, job):
-        pass
-
-    def open_change(self, job, title, body):
-        return "local host: there are no pull requests; push the branch and the factory merges it"
-
     def landed(self, job):
         """True once `job merge` merged the job, or a person merged a commit
         the gate had passed. Only a gated commit counts: a branch that merely
@@ -506,9 +367,6 @@ class LocalHost:
             if run(["git", "merge-base", "--is-ancestor", sha, f"origin/{BASE}"], check=False).returncode == 0:
                 job["merged_sha"] = sha
                 return True
-        return False
-
-    def comment(self, job, text):
         return False
 
     def close(self, job):
@@ -545,17 +403,12 @@ class LocalHost:
         return f"{job['branch']} into {BASE}" if job["round"] else None
 
 
-TRACKERS = {"github": GitHubTracker, "files": FilesTracker, "kata": KataTracker}
-HOSTS = {"github": GitHubHost, "local": LocalHost}
-TRACKER_NAME = CONFIG.get("tracker", "github")
-HOST_NAME = CONFIG.get("host") or ("github" if TRACKER_NAME == "github" else "local")
+TRACKERS = {"files": FilesTracker, "kata": KataTracker}
+TRACKER_NAME = CONFIG.get("tracker", "files")
 if TRACKER_NAME not in TRACKERS:
     sys.exit(f"job: config.json tracker must be one of {', '.join(TRACKERS)}, not {TRACKER_NAME!r}")
-if HOST_NAME not in HOSTS:
-    sys.exit(f"job: config.json host must be one of {', '.join(HOSTS)}, not {HOST_NAME!r}")
 TRACKER = TRACKERS[TRACKER_NAME]()
-HOST = HOSTS[HOST_NAME]()
-LOCAL = HOST.local
+HOST = LocalHost()
 
 _operator = None
 
@@ -639,7 +492,7 @@ def all_jobs():
 def running(jobs):
     """Jobs holding a concurrency slot: every job not finished or waiting.
     A job waiting for the host's own checks before it merges holds none."""
-    return [j for j in jobs if j["stage"] not in TERMINAL | WAITING and not j.get("awaiting_host")]
+    return [j for j in jobs if j["stage"] not in TERMINAL | WAITING]
 
 
 def require_slot(job_id):
@@ -1043,13 +896,10 @@ def advance(job, stage, park=False):
                 f"${cap:.2f} in config.json. Park it (`job park`) or raise the limit")
 
     if stage == "merged":
-        require(HOST.landed(job), f"{job['branch']} isn't merged into {BASE}" if LOCAL else "the PR isn't merged")
+        require(HOST.landed(job), f"{job['branch']} isn't merged into {BASE}")
         if old == "needs-human":
             label(job["issue"], remove=LABELS["needs_human"])
-        job["awaiting_host"] = False
-        # GitHub closes its own issue through "Closes #n"; any other pairing needs telling.
-        closes_itself = TRACKER_NAME == "github" and HOST_NAME == "github"
-        if not closes_itself and TRACKER.get(job["issue"])["state"] == "OPEN":
+        if TRACKER.get(job["issue"])["state"] == "OPEN":
             at = f" at {job['merged_sha'][:7]}" if job.get("merged_sha") else ""
             note = (f"Factory job {job['id']}: {job['branch']} is merged into {BASE}{at}. "
                     f"Records are in factory/jobs/{job['id']}/.")
@@ -1061,8 +911,7 @@ def advance(job, stage, park=False):
         post(job, f"### Factory: rejected\n\n{reason}")
         waiting = LABELS["needs_info"] if old == "needs-info" else LABELS["needs_human"]
         label(job["issue"], remove=[LABELS["queue"], waiting])
-        if job["pr"] or LOCAL:
-            HOST.close(job)
+        HOST.close(job)
 
     elif park:
         job["parked_from"] = old
@@ -1111,7 +960,6 @@ def advance(job, stage, park=False):
         res = git(job, "rev-parse", f"origin/{job['branch']}", check=False)
         remote = res.stdout.strip() if res.returncode == 0 else ""
         require(head == remote, f"{job['branch']} isn't pushed: local {head[:7]}, origin {remote[:7] or 'missing'}")
-        HOST.find_change(job)
         job["built_sha"] = head
 
     elif old == "build":  # → needs-human
@@ -1217,8 +1065,7 @@ def advance(job, stage, park=False):
 
     if stage == "needs-human":
         body = f"### Factory: needs a human\n\n{(d / 'decision.md').read_text().split(chr(10), 1)[1].strip()}"
-        if not (job["pr"] and HOST.comment(job, scrub(f"{MARKER}\n{body}"))):
-            post(job, body)
+        post(job, body)
         label(job["issue"], add=LABELS["needs_human"])
 
     if stage in TERMINAL and Path(job["worktree"]).exists():
@@ -1257,7 +1104,6 @@ def cmd_create(number):
     job_dir(job_id).mkdir()
     job = {
         "id": job_id, "issue": issue["number"], "title": issue["title"], "issue_url": issue["url"],
-        "pr": None, "pr_url": None,
         "branch": f"factory/{job_id}",
         "worktree": str(REPO / ".worktrees" / job_id),
         "stage": "intake", "round": 0, "round_limit": CONFIG["max_rounds"],
@@ -1274,15 +1120,10 @@ def cmd_queue():
     """Rows in the order to start them. `resume` and `new` rows fit in the
     concurrency slots; the rest show as `hold` until a running job finishes."""
     jobs = {j["issue"]: j for j in all_jobs()}
-    # A job is done once its work is on the base branch: its PR is merged on
-    # GitHub (which also closes the issue), or its branch is merged on the local host.
+    # A job is done once its branch is merged into the base, by the factory or by a person.
     for j in jobs.values():
         if j["stage"] not in TERMINAL and HOST.landed(j):
             save(advance(sync(j), "merged"))
-        elif j["stage"] == "merging" and j.get("awaiting_host") and HOST.state(j) == "CLOSED":
-            escalate(j, "The pull request was closed while the factory waited for the host to merge it.")
-            j["awaiting_host"] = False
-            save(advance(sync(j), "needs-human"))
     issues = TRACKER.queued()
     open_numbers = {i["number"] for i in issues}
     running_rows, replied_rows, new_rows, other_rows = [], [], [], []
@@ -1300,15 +1141,13 @@ def cmd_queue():
             where = HOST.where(j)
             hint = (f"merge failed: retry with `job merge {j['id']}`, or give feedback" if j.get("merge_failed")
                     else f"approve with `job approve {j['id']}`, or give feedback" if j.get("gated_sha")
-                    else f"merge {where}{' and push' if LOCAL else ''}, or give feedback" if where
+                    else f"merge {where} and push, or give feedback" if where
                     else "give feedback")
             other_rows.append(("wait", n, j["id"], j["stage"], hint))
         elif j["stage"] == "rejected":
             other_rows.append(("skip", n, j["id"], j["stage"], f"rejected; delete factory/jobs/{j['id']} to retry"))
         elif j["stage"] == "merged":
             other_rows.append(("skip", n, j["id"], j["stage"], "merged"))
-        elif j.get("awaiting_host"):
-            other_rows.append(("wait", n, j["id"], j["stage"], f"{HOST.where(j)} merges when its checks pass"))
         else:
             running_rows.append(("resume", n, j["id"], j["stage"], f"round {j['round']}"))
     for n, j in sorted(jobs.items(), key=lambda kv: kv[1]["id"]):
@@ -1357,14 +1196,10 @@ def cmd_merge(job):
 
     def done():
         save(advance(sync(job), "merged"))
-        print(f"{job['id']}: merged {job['branch']} into {BASE} at {job['merged_sha'][:7]}" if LOCAL
-              else f"{job['id']}: merged PR #{job['pr']}")
+        print(f"{job['id']}: merged {job['branch']} into {BASE} at {job['merged_sha'][:7]}")
 
     if HOST.landed(job):
         return done()
-    if job.get("awaiting_host"):
-        print(f"{job['id']}: waiting: {HOST.where(job)} merges when its checks pass")
-        return
 
     def fail(why, retry=True):
         kept = escalate(job, why)
@@ -1396,22 +1231,16 @@ def cmd_merge(job):
             git(job, "push", "origin", job["branch"])
             if not CONFIG.get("auto_merge", True) and not job.get("human_approved"):
                 return fail(f"Approved, gated and synced with {BASE}. `auto_merge` is off in config.json, so a "
-                            f"person merges: merge {HOST.where(job)}{' and push' if LOCAL else ''}. "
+                            f"person merges: merge {HOST.where(job)} and push. "
                             f"The next `job queue` records it.", retry=False)
             outcome = HOST.merge(job)
         except Refused as e:
-            # On the local host a refused push means the base moved: sync and gate again.
-            if LOCAL and attempt < MERGE_ATTEMPTS:
+            # A refused push means the base moved: sync and gate again.
+            if attempt < MERGE_ATTEMPTS:
                 continue
             return fail(f"The merge failed:\n\n```\n{e}\n```")
         break
     event(job, "merge", outcome=outcome, attempt=attempt)
-    if outcome == "waiting":
-        job["awaiting_host"] = True
-        save(job)
-        print(f"{job['id']}: waiting: {HOST.where(job)} merges when its checks pass; `job queue` records it")
-        return
-    # GitHub may already have deleted the branch on merge.
     run(["git", "push", "origin", "--delete", job["branch"]], check=False)
     done()
 
@@ -1450,7 +1279,6 @@ def cmd_park(job, text):
         die("no reason on stdin")
     was = job["stage"]
     escalate(job, f"Parked by @{operator()} while the job was in {was}:\n\n{text.strip()}")
-    job["awaiting_host"] = False
     save(advance(sync(job), "needs-human", park=True))
     print(f"{job['id']}: parked from {was}; `job feedback` resumes it, `job reject` drops it")
 
@@ -1458,7 +1286,6 @@ def cmd_park(job, text):
 def cmd_mark_merged(job, sha):
     """Record a merge a person made in a way git can't trace back to the
     branch (a squash or a rebase)."""
-    require(LOCAL, "on GitHub the merged pull request is the record; `job queue` picks it up")
     require(job["stage"] not in TERMINAL, f"{job['id']} is already {job['stage']}")
     run(["git", "fetch", "origin", BASE])
     full = run(["git", "rev-parse", "--verify", f"{sha}^{{commit}}"]).stdout.strip()
@@ -1468,11 +1295,6 @@ def cmd_mark_merged(job, sha):
     event(job, "mark-merged", sha=full, by=operator())
     save(advance(sync(job), "merged"))
     print(f"{job['id']}: merged at {full[:7]} (recorded by hand)")
-
-
-def cmd_open_change(job, title, body):
-    require(job["stage"] == "build", f"{job['id']} is in {job['stage']}, not build")
-    print(f"{job['id']}: {HOST.open_change(job, ' '.join(title.split()), body.strip())}")
 
 
 def cmd_show(job):
@@ -1554,11 +1376,10 @@ def elapsed(job):
 
 def cmd_summary(args):
     jobs = [resolve(a) for a in args] if args else all_jobs()
-    rows = [("job", "issue", "stage", "round", "pr", "cost", "time")]
+    rows = [("job", "issue", "stage", "round", "cost", "time")]
     for j in jobs:
         sync(j)  # for display only; the orchestrator owns the saved state
         rows.append((j["id"], f"#{j['issue']}", j["stage"], str(j["round"]),
-                     f"#{j['pr']}" if j["pr"] else "-",
                      f"${j['cost_usd']:.2f}" + ("+" if j.get("cost_incomplete") else ""), elapsed(j)))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
@@ -1568,7 +1389,7 @@ def cmd_summary(args):
 
 
 READ_ONLY = {"summary", "issues", "show"}
-TAKES_STDIN = {"feedback", "reject", "park", "open-change", "answer", "new-issue"}
+TAKES_STDIN = {"feedback", "reject", "park", "answer", "new-issue"}
 
 
 def main(argv):
@@ -1603,8 +1424,6 @@ def main(argv):
             cmd_show(resolve(args[0]))
         elif cmd == "mark-merged" and len(args) == 2:
             cmd_mark_merged(sync(resolve(args[0])), args[1])
-        elif cmd == "open-change" and len(args) == 2:
-            cmd_open_change(resolve(args[0]), args[1], text)
         elif cmd == "issues" and not args:
             cmd_issues()
         elif cmd in {"label", "unlabel"} and len(args) == 2:

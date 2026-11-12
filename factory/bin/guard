@@ -9,9 +9,8 @@ call is outside what the role may do:
 
   Write, Edit   only the role's own file in factory/jobs/<job>/, plus, for the
                 builder, files inside .worktrees/
-  Bash          no factory/bin/job (the orchestrator moves state; the builder
-                may run `open-change`), no merging or closing pull requests,
-                no push to the base branch or forced push, no writing into
+  Bash          no factory/bin/job or route (the orchestrator moves state),
+                no GitHub CLI, no push to the base branch or forced push, no writing into
                 factory/jobs/ through the shell, and for every role except
                 the builder no command that changes the branch
 
@@ -38,8 +37,7 @@ OWN_FILE = {
 }
 
 ALWAYS = [
-    (r"\bgh\s+pr\s+(merge|close|ready|review)\b", "pull requests are merged, closed and marked ready by factory/bin/job"),
-    (r"\bgh\s+(issue|label|repo|release|secret|workflow|api)\b", "issues and labels are the factory's; agents don't call the tracker"),
+    (r"(^|[\s;&|(])gh\s", "the factory runs without GitHub; issues and merges are factory/bin/job's"),
     (r"\bgit\s+push\b[^|;&]*(--force\b|--force-with-lease\b|\s-f\b|--delete\b|--mirror\b|--all\b)", "no forced, deleting or bulk pushes"),
     (rf"\bgit\s+push\b[^|;&]*(\s|:)(refs/heads/)?{re.escape(BASE)}(\s|$)", f"agents never push to {BASE}; only factory/bin/job merge does"),
     (r"(>|\btee\b|\bcp\b|\bmv\b|\brm\b|\bsed\s+-i|\btouch\b|\btruncate\b)[^|;&]*factory/(jobs|bin|config\.json|checks\.sh)",
@@ -85,10 +83,8 @@ def main(argv):
         # Windows reaches the same files as factory\bin\job or Factory/Bin/Job, so match
         # with forward slashes and ignore case. On Linux this only ever blocks more.
         command = (args.get("command") or "").replace("\\", "/")
-        for m in JOB_SCRIPT.finditer(command):
-            rest = command[m.end():].lstrip()
-            if not (role == "builder" and m.group(1).lower() == "job" and rest.startswith("open-change")):
-                deny("the orchestrator runs factory/bin/job and factory/bin/route; agents don't move job state")
+        if JOB_SCRIPT.search(command):
+            deny("the orchestrator runs factory/bin/job and factory/bin/route; agents don't move job state")
         for pattern, why in ALWAYS + ([] if role == "builder" else NOT_BUILDER):
             if re.search(pattern, command, re.IGNORECASE):
                 deny(why)

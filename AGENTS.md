@@ -43,8 +43,11 @@ python3 -m pytest -q
 
 ## Software factory
 
-`/factory run` builds every open GitHub issue labeled `factory` through
-intake → spec → build → gate → review → approve, one PR per issue. State is in
+`/factory run` builds every open issue labeled `factory` in `factory/issues/`
+(Markdown files, gitignored) through intake → spec → build → gate → review →
+approve, one branch per issue. An approved branch is merged into `main` on
+`origin`, a repository on disk next to the checkout; there are no pull
+requests. State is in
 `factory/jobs/` (gitignored); `factory/bin/job` is its only writer. Checks:
 `factory/checks.sh`. Dashboard: `./fx up`, or `cd factory && python3 -m http.server 8765 --bind 127.0.0.1`,
 then open http://localhost:8765/dashboard.html.
@@ -55,10 +58,10 @@ configuration (`pyproject.toml`, any `conftest.py`) or the files in
 are in `factory/tests/` and run with `python3 -m pytest factory/tests -q`;
 they are not part of `factory/checks.sh`.
 
-The factory also runs fully locally, with no GitHub: `factory/local-setup.sh
-<dir>` creates a copy whose issues are Markdown files in `factory/issues/`
-(gitignored) and whose `origin` is a repository on disk. See
-`docs/local-mode.md`.
+`./fx setup` makes a checkout the factory's sandbox: it creates `origin` on
+disk, keeps the remote it was cloned from as `upstream`, and copies the demo
+issues into `factory/issues/`. `./fx run` does this the first time on its own.
+See `docs/local-mode.md`.
 
 Each job works in its own git worktree, a full checkout of the repo at
 `.worktrees/<job-id>` (gitignored). A tool run from the repo root that doesn't
