@@ -5,7 +5,6 @@ is needed: whether a prompt changed since the last retro is passed in.
 """
 
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -51,7 +50,9 @@ def box(tmp_path):
     repo = tmp_path / "repo"
     (repo / ".claude" / "agents").mkdir(parents=True)
     for name in ("builder.md", "spec-writer.md", "reviewer-code.md", "reviewer-ux.md"):
-        shutil.copy(ROOT / ".claude" / "agents" / name, repo / ".claude" / "agents" / name)
+        # LF, as in the repository: a Windows checkout may have turned it into CRLF.
+        text = (ROOT / ".claude" / "agents" / name).read_text(encoding="utf-8")
+        (repo / ".claude" / "agents" / name).write_text(text, encoding="utf-8", newline="\n")
     (repo / "factory" / "jobs").mkdir(parents=True)
     return repo
 
@@ -112,7 +113,7 @@ def test_a_proposal_cites_job_files_and_lines_and_its_diff_applies(box):
     assert "+## Lessons from retros" in diff
     assert "+- Run `ruff check .` and fix what it reports" in diff and "`gate:lint` in 001-a, 002-b)" in diff
     patch = box / "proposal.diff"
-    patch.write_text(diff)
+    patch.write_text(diff, encoding="utf-8", newline="\n")
     applied = subprocess.run(["git", "apply", "--check", str(patch)], cwd=box, capture_output=True, text=True)
     assert applied.returncode == 0, applied.stderr
 
