@@ -190,6 +190,12 @@ It moves the job to `needs-human` with your reason and frees its slot. If a
 script says a file "changed after the factory accepted it", park the job with
 that message: someone rewrote a verdict, and a person has to look.
 
+If `advance` refuses because the job is "over max_cost_usd", park the job with
+that message, whatever step it was in. Don't resume an agent with it: no agent
+can bring a cost down, and another round only adds to it. A person decides
+whether the job is worth more (`./fx config max_cost_usd`, then `./fx feedback`)
+or drops it.
+
 A person can merge a job's branch into the base on `origin` by hand at any
 stage. `factory/bin/job queue` then moves the job to `merged`; stop any agents
 still running for it.
