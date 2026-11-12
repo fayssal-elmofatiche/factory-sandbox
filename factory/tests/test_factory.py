@@ -773,6 +773,53 @@ def test_issues_filed_at_once_are_all_kept(sb):
     assert len(sb.job("issues").stdout.splitlines()) == 4
 
 
+def block(sb, ref, *blockers):
+    path = sb.repo / "factory" / "issues" / f"{ref}.md"
+    text = path.read_text()
+    path.write_text(text.replace("\nstate:", f"\nblocked_by: {', '.join(blockers)}\nstate:", 1))
+
+
+def test_a_blocked_issue_waits_until_its_blocker_merges(sb):
+    first = sb.to_approved(title="First thing")
+    second = sb.issue(title="Second thing")
+    block(sb, second, "1")
+    row = [r for r in sb.job("queue").stdout.splitlines() if r.split("\t")[1] == second][0]
+    assert row.startswith("wait\t") and "blocked by #1" in row
+    res = sb.job("create", second, check=False)
+    assert res.returncode == 1 and "blocked by #1" in res.stderr
+    sb.job("merge", first)
+    assert sb.job("queue").stdout.startswith(f"new\t{second}\t")
+    sb.job("create", second)
+
+
+def test_a_blocked_issue_does_not_take_a_slot(sb):
+    config = sb.repo / "factory" / "config.json"
+    config.write_text(json.dumps({**json.loads(config.read_text()), "concurrency": 2}))
+    sb.job("create", sb.issue(title="First thing"))
+    blocked = sb.issue(title="Second thing")
+    block(sb, blocked, "1")
+    free = sb.issue(title="Third thing")
+    rows = sb.job("queue").stdout.splitlines()
+    assert any(r.startswith(f"new\t{free}\t") for r in rows)
+    assert any(r.startswith(f"wait\t{blocked}\t") for r in rows)
+
+
+def test_a_blocker_that_does_not_exist_keeps_the_issue_waiting(sb):
+    ref = sb.issue()
+    block(sb, ref, "7")
+    out = sb.job("queue").stdout
+    assert out.startswith(f"wait\t{ref}\t") and "#7 (doesn't exist)" in out
+
+
+def test_blocked_by_survives_the_factory_writing_the_issue(sb):
+    ref = sb.issue()
+    block(sb, ref, "2", "3")
+    sb.job("label", ref, "extra")
+    sb.job("unlabel", ref, "extra")
+    assert "blocked_by: 2, 3\n" in (sb.repo / "factory" / "issues" / f"{ref}.md").read_text()
+    assert "blocked by #2 (doesn't exist), #3 (doesn't exist)" in sb.job("queue").stdout
+
+
 def test_odd_refs_are_refused(sb):
     sb.issue()
     for ref in ("abc", "0001", "../1"):
