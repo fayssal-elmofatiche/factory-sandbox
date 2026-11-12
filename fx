@@ -578,7 +578,7 @@ def cmd_config(args):
     if new == text:
         print(f"{key} is already {value}")
         return 0
-    path.write_text(new)
+    path.write_text(new, newline="\n")  # LF on Windows too, as .gitattributes wants
     sh("git", "add", "factory/config.json", check=True)
     sh("git", "commit", "-m", f"Set {key} to {value}", check=True)
     print(f"{key} is now {value} (committed as {short('HEAD')}).")

@@ -59,7 +59,7 @@ if '"tracker"' not in s:
 else:
     s = s.replace('"tracker": "%s"' % json.loads(s)["tracker"], '"tracker": "%s"' % tracker, 1)
 assert json.loads(s)["tracker"] == tracker
-p.write_text(s)
+p.write_text(s, newline="\n")  # LF on Windows too
 PY
 git add factory/config.json
 
