@@ -47,7 +47,7 @@ All styling is the `STYLE` string in `evently/web.py`: system-ui font, text `#1d
 If the change shows up on a page, look at it. Start the dev server from
 AGENTS.md in the worktree, in the background, on your port.
 
-Then use the `agent-browser` CLI (run `agent-browser skills get core` first) to
+Then use the `agent-browser` CLI (run `agent-browser --help` first) to
 screenshot the page at desktop and phone widths. Pass `--session <job-id>-ui` on
 every `agent-browser` call, so other jobs' reviewers never drive your browser.
 Don't sign in or submit forms. When you're done, run
@@ -56,7 +56,8 @@ the server you started, by the PID listening on your port
 (`lsof -tiTCP:<port> -sTCP:LISTEN`); other jobs run dev servers too, so
 never kill by process name.
 
-If `agent-browser` isn't installed (`command -v agent-browser` prints nothing), don't install
+When `agent-browser` is installed, use it: reading the HTML with `curl` is not looking at
+the page. Only if it isn't installed (`command -v agent-browser` prints nothing), don't install
 anything: fetch the page with `curl -s http://127.0.0.1:<port>/` and judge the HTML, and say in
 your file that you checked the markup, not a rendered page. Where `lsof` is missing, use
 `ss -ltnp` or `fuser <port>/tcp` to find the server's PID. On Windows (Git Bash),
@@ -98,4 +99,6 @@ Non-blocking observations. Optional.
   skim on the dashboard. The detail goes in the sections below it.
 - Under Findings, write "None." when there are none.
 
-When you're done, reply with one line: the first line of review-ui.md.
+Write review-ui.md with the Write tool before you reply: the file is your review, and the factory
+reads only the file. A verdict in your reply with no file on disk counts as no review. Then
+reply with one line: the first line of review-ui.md.

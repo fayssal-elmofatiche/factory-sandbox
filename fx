@@ -75,6 +75,26 @@ def job(*args):
 # ---- doctor ----------------------------------------------------------------
 
 
+def folder_trusted():
+    """True or False when Claude Code's own record says whether this folder's
+    trust dialog was accepted; None when the record can't be read. Claude Code
+    skips the hooks in project agents (the factory's guard among them) in a
+    folder that was never trusted, and says nothing about it."""
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home())
+    try:
+        projects = json.loads((home / ".claude.json").read_text(encoding="utf-8")).get("projects", {})
+    except (OSError, ValueError, AttributeError):
+        return None
+    # Windows records C:/Users/..., with forward slashes, and the drive letter's case may vary.
+    def spell(path):
+        return path.lower() if portable.WINDOWS else path
+    wanted = {spell(k) for path in (REPO, REPO.resolve()) for k in (str(path), path.as_posix())}
+    for key, project in projects.items():
+        if spell(key) in wanted:
+            return bool(project.get("hasTrustDialogAccepted"))
+    return False
+
+
 def cmd_doctor():
     rows = []  # (level, name, detail); level is ok, warn or MISSING
 
@@ -136,6 +156,13 @@ def cmd_doctor():
         tools.append(("lsof", "used to stop a job's dev server"))
     for tool, why in tools:
         rows.append(("ok" if have(tool) else "warn", tool, "" if have(tool) else why))
+
+    trusted = folder_trusted()
+    rows.append(("ok" if trusted else "warn", "folder trusted in Claude Code",
+                 "" if trusted else "could not tell; open `claude` here once and accept the trust prompt"
+                 if trusted is None else
+                 "not yet: the agents' guard hooks are skipped until you open `claude` here "
+                 "(or ./fx run) and accept the trust prompt"))
 
     if bash:
         checks = sh(bash, str(FACTORY / "checks.sh"))
