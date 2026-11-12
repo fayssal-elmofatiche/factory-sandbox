@@ -19,6 +19,8 @@ jobs:
         shell: bash  # Git Bash on Windows, as the factory uses it
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # local-setup.sh pushes HEAD into a new origin; git refuses that from a shallow clone
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
