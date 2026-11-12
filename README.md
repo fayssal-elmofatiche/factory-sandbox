@@ -24,7 +24,8 @@ cd factory-sandbox
 factory/local-setup.sh ~/factory-demo
 cd ~/factory-demo
 ./fx doctor     # check this machine can run the factory
-./fx up         # start the dashboard, open it and the presentation
+./fx deck       # open the presentation, to show what the factory does
+./fx up         # start the dashboard and open it
 ./fx run        # open Claude Code on /factory run
 ```
 
@@ -109,9 +110,9 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | Command | What it does |
 | --- | --- |
 | `./fx doctor` | Checks the prerequisites and whether the checks pass |
-| `./fx up` | Starts the dashboard on a free local port, opens it and the presentation |
+| `./fx up` | Starts the dashboard on a free local port and opens it |
 | `./fx down` | Stops the dashboard |
-| `./fx deck` | Opens the presentation |
+| `./fx deck` | Opens the presentation; show it before `./fx up` and `./fx run` |
 | `./fx run [issue]` | Opens Claude Code on `/factory run` |
 | `./fx issues` | Lists the issues |
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |

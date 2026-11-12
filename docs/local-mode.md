@@ -28,7 +28,8 @@ cd factory-sandbox
 factory/local-setup.sh ~/factory-demo
 cd ~/factory-demo
 ./fx doctor     # check this machine can run the factory
-./fx up         # start the dashboard, open it and the presentation
+./fx deck       # open the presentation, to show what the factory does
+./fx up         # start the dashboard and open it
 ./fx run        # open Claude Code on /factory run
 ```
 

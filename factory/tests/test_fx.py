@@ -150,6 +150,21 @@ def test_up_serves_the_dashboard_on_localhost_and_down_stops_it(sandbox):
         urllib.request.urlopen(url, timeout=2)
 
 
+@pytest.mark.skipif(portable.wsl(), reason="under WSL fx hands URLs to Windows, not to $BROWSER")
+def test_up_opens_only_the_dashboard_and_deck_opens_the_presentation(sandbox, tmp_path, monkeypatch):
+    """The presentation comes first, on its own; `fx up` must not open it again."""
+    opened = tmp_path / "opened.txt"
+    recorder = tmp_path / "record.py"
+    recorder.write_text(f"import sys\nopen({str(opened)!r}, 'a').write(sys.argv[1] + '\\n')\n")
+    monkeypatch.setenv("BROWSER", f'"{sys.executable}" "{recorder}" %s')
+    up = fx(sandbox, "up").stdout
+    assert "presentation" not in up
+    assert [u for u in opened.read_text().split() if u] == [up.split()[1]]
+    fx(sandbox, "deck")
+    urls = opened.read_text().split()
+    assert len(urls) == 2 and urls[1].endswith("presentation.html")
+
+
 # ---- config ----------------------------------------------------------------
 
 
