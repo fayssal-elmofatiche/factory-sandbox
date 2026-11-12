@@ -121,7 +121,9 @@
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--human) 40%, transparent),
                 0 8px 24px -12px color-mix(in srgb, var(--human) 60%, transparent);
   }
-  .card.done { opacity: .72; }
+  /* A finished job stays at full strength: a merge is news, not background. */
+  .card.merged { border-color: color-mix(in srgb, var(--merged) 40%, var(--line)); }
+  .flag.done { color: var(--merged); }
   .card.rejected .feature { text-decoration: line-through; text-decoration-color: var(--rule); }
   .flag.wait { color: var(--changes); }
   .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -144,7 +146,10 @@
   .links a { color: var(--active); text-decoration: none; }
   .links a:hover { text-decoration: underline; }
   .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
-  .meta .risk-high { color: var(--human); } .meta .risk-medium { color: var(--changes); }
+  /* Risk is a neutral tag, not a colour: red means a person must act, and risk alone doesn't. */
+  .meta .risk { padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; }
+  .meta .risk-medium { color: var(--text); border-color: var(--muted); }
+  .meta .risk-high { color: var(--text); border-color: var(--text); font-weight: 700; }
   .chip.FAIL { border: 1px solid transparent; color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
   .branch {
     font-family: var(--mono); font-size: .75rem; color: var(--faint);
@@ -235,8 +240,8 @@
   .file:hover { background: var(--card); color: var(--text); }
   .file.on { background: var(--card-hover); color: var(--text); }
   .file .rn { display: none; }
-  .file .v { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
-  .v.good { background: var(--pass); } .v.warn { background: var(--changes); } .v.stop { background: var(--human); }
+  .file .v { width: 1ch; text-align: center; color: var(--faint); flex: none; }
+  .v.good { color: var(--pass); } .v.warn { color: var(--changes); } .v.stop { color: var(--human); }
   .doc { overflow-y: auto; padding: 22px 28px 60px; min-width: 0; }
 
   /* Rendered markdown */
@@ -429,10 +434,14 @@ async function roundVerdicts(job, n) {
   return v
 }
 
+// A verdict shows as a glyph as well as a colour, so it reads without colour.
+const GLYPH = { PASS: '✓', CHANGES: '!', FAIL: '✕', good: '✓', warn: '!', stop: '✕' }
+
 function chip(label, v, waiting, title, extra = '', model = '') {
   const cls = ['PASS', 'CHANGES', 'FAIL'].includes(v) ? v : v === 'pending' ? (waiting ? 'wait' : '') : 'bad'
   const on = model ? ` (${esc(model)})` : ''
-  return `<span class="chip ${extra} ${cls}" title="${esc(title)}${on}: ${esc(v)}">${esc(label)}${model ? `<small>${esc(model)}</small>` : ''}</span>`
+  const glyph = GLYPH[v] || (cls === 'bad' ? '?' : '')
+  return `<span class="chip ${extra} ${cls}" title="${esc(title)}${on}: ${esc(v)}">${glyph ? `${glyph} ` : ''}${esc(label)}${model ? `<small>${esc(model)}</small>` : ''}</span>`
 }
 
 function roundRow(job, n, v) {
@@ -481,11 +490,12 @@ function card(job, rounds) {
   const [num, ...slug] = job.id.split('-')
   const flag = human ? '<span class="flag">your call</span>'
     : job.stage === 'needs-info' ? '<span class="flag wait">asked author</span>'
-    : job.stage === 'rejected' ? '<span class="flag wait">rejected</span>' : ''
+    : job.stage === 'rejected' ? '<span class="flag wait">✕ rejected</span>'
+    : job.stage === 'merged' ? '<span class="flag done">✓ merged</span>' : ''
   const state = human ? 'your call' : job.stage === 'needs-info' ? 'asked the author' : job.stage
   const risk = job.intake?.risk
   const meta = [
-    risk ? `<span class="risk-${esc(risk)}">${esc(risk)}</span>` : '',
+    risk ? `<span class="risk risk-${esc(risk)}">${esc(risk)} risk</span>` : '',
     `<span${job.cost_incomplete ? ` title="no price for ${esc(job.cost_incomplete.join(', '))}"` : ''}>${cost(job)}</span>`,
     `<span>${elapsed(job)}</span>`,
     live ? quiet(job) : '',
@@ -847,7 +857,12 @@ async function copyText(button) {
   setTimeout(() => { button.textContent = 'copy' }, 1500)
 }
 
-async function refreshDrawer() {
+let drawerState = null // the job's stage, round and last update when the file list was last read
+let drawerFiles = []
+
+// force: the drawer just opened, or a file was picked. Otherwise the file list and
+// verdict lines are read again only when the job itself has moved on.
+async function refreshDrawer(force = false) {
   const job = jobs.find((j) => j.id === openJobId)
   if (!job) return
   $('d-num').textContent = `${job.id} · ${job.stage}${job.round ? ` · round ${job.round}` : ''} · ${cost(job)} · ${elapsed(job)}`
@@ -861,7 +876,10 @@ async function refreshDrawer() {
   }
 
   const base = `jobs/${job.id}/`
-  const files = sortFiles(await listFiles(base))
+  const state = `${job.id}|${job.stage}|${job.round}|${job.updated}`
+  const moved = force || state !== drawerState
+  if (moved) drawerFiles = sortFiles(await listFiles(base))
+  const files = drawerFiles
   if (!openPath || !files.includes(openPath)) openPath = files[0] || null
 
   let text = null
@@ -869,11 +887,14 @@ async function refreshDrawer() {
     text = await fetchText(base + openPath)
     firstLines.set(base + openPath, text.split('\n')[0].trim())
   }
-  // Every poll, not once: a verdict or status line can change while the drawer is open.
-  await Promise.all(files.filter((f) => f !== openPath).map(async (f) => {
-    const first = await fetchFirst(base + f)
-    if (first !== null) firstLines.set(base + f, first)
-  }))
+  // A verdict or status line changes only when the job moves on, so read them again then.
+  if (moved) {
+    await Promise.all(files.filter((f) => f !== openPath).map(async (f) => {
+      const first = await fetchFirst(base + f)
+      if (first !== null) firstLines.set(base + f, first)
+    }))
+    drawerState = state
+  }
 
   let group = null
   $('d-files').innerHTML = files.map((f) => {
@@ -886,7 +907,7 @@ async function refreshDrawer() {
       : esc(f)
     const t = tone(firstLines.get(base + f) || '')
     return `${head}<button class="file ${f === openPath ? 'on' : ''}" data-file="${esc(f)}">
-      <span class="v ${t || ''}"></span>${name}</button>`
+      <span class="v ${t || ''}" aria-hidden="true">${GLYPH[t] || '·'}</span>${name}${t ? `<span class="sr-only"> (${t === 'good' ? 'passed' : t === 'warn' ? 'changes asked' : 'stopped'})</span>` : ''}</button>`
   }).join('') || '<div class="empty">No files yet.</div>'
 
   if (text !== openText) {
@@ -913,7 +934,7 @@ async function openDrawer(id, from) {
   openText = undefined
   document.body.classList.add('open')
   try {
-    await refreshDrawer()
+    await refreshDrawer(true)
   } catch (err) {
     $('d-doc').innerHTML = `<p class="note">${esc(err.message)}</p>`
   }
@@ -947,7 +968,7 @@ document.addEventListener('click', (e) => {
     openPath = fileEl.dataset.file
     openText = undefined
     $('d-doc').parentElement.scrollTop = 0
-    return refreshDrawer()
+    return refreshDrawer(true)
   }
   if (e.target.closest('[data-close]')) closeDrawer()
 })
@@ -988,7 +1009,7 @@ function markdown(src) {
   const first = (lines[0] || '').trim()
   const t = tone(first)
   if (t) {
-    html += `<div class="verdict ${t}">${esc(first)}</div>`
+    html += `<div class="verdict ${t}"><span aria-hidden="true">${GLYPH[t]} </span>${esc(first)}</div>`
     i = 1
     // The rest of a KEY: value header block (intake.md, checks.md).
     const extra = []
