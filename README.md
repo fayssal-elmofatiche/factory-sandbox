@@ -5,7 +5,8 @@ A written request goes in, and a tested, reviewed code change comes out. Every
 step leaves a file you can read afterwards.
 
 The factory is [ZazenCodes' Software Factory v2](https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2),
-installed and tailored to a toy app called **evently**. This repo exists to show
+installed and tailored to a toy energy-trading app called **dayahead**, a
+day-ahead power auction. This repo exists to show
 the factory doing real work, and to be a place to try it.
 
 **New here?** Open [docs/presentation.html](docs/presentation.html) in a browser,
@@ -204,37 +205,51 @@ point so `./fx reset` can return to it after a rehearsal. See
 
 ## Example run
 
-Issue [#1](https://github.com/fayssal-elmofatiche/factory-sandbox/issues/1)
+The first run was on the toy app this repo had before **dayahead**, an
+event-registration app. Issue
+[#1](https://github.com/fayssal-elmofatiche/factory-sandbox/issues/1)
 asked for a way to look up an attendee's waitlist position. The factory accepted
 it as low risk, routed it to a single code reviewer, passed the gate on the branch
 and again after syncing with `main`, and merged
 [PR #6](https://github.com/fayssal-elmofatiche/factory-sandbox/pull/6): one
-method and eight tests, for about $1 in model usage.
+method and eight tests, for about $1 in model usage. `OrderBook.merit_order_rank`
+in **dayahead** is the same kind of change, carried over by hand; a factory run
+on **dayahead** is still to do.
 
-The other open issues exercise the remaining paths: an interface change that
-brings in UX and UI reviewers, an attendee export that should be handed to a
-person, and an out-of-scope request that intake should reject.
+The demo issues in `factory/demo-issues/` exercise the remaining paths: an
+interface change that brings in UX and UI reviewers, an export of
+per-participant order data that should be handed to a person, and an
+out-of-scope request that intake should reject.
 
-## The app: evently
+## The app: dayahead
 
-An in-memory event-registration library with a stdlib web page:
+An in-memory day-ahead power auction with a stdlib web page:
 
-- `evently/registry.py`: events with a capacity, registrations, a waitlist that
-  promotes in order on cancellation, and waitlist positions.
-- `evently/web.py`: an HTML events page served on `127.0.0.1`.
-- `tests/`: pytest tests for both.
+- `dayahead/orderbook.py`: bids and offers per delivery hour in one bidding
+  zone, each with a volume in MWh and a limit price in EUR/MWh. Each hour
+  clears by merit order: offers stack cheapest first, bids dearest first, and
+  the clearing price is the lowest price at which the most volume trades.
+  `merit_order_rank` gives an offer's place in its hour's merit order.
+- `dayahead/web.py`: an HTML page of the hourly clearing prices and cleared
+  volumes, served on `127.0.0.1`. It shows only hourly totals, never who bid
+  what.
+- `dayahead/seed.py`: one day of sample orders (wind, solar, lignite, gas and
+  two buyers) for the dev server.
+- `tests/`: pytest tests for all three.
 
 ```bash
 python3 -m pytest -q               # tests
 ruff check .                       # lint
-PORT=8001 python3 -m evently.web   # events page on http://127.0.0.1:8001/
+PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
 ```
 
 ## What was changed from upstream
 
-- Agents in `.claude/agents/` are tailored to evently: what the app is for,
-  its security rules (escape HTML, treat emails as personal data, bind to
-  localhost) and its style tokens.
+- Agents in `.claude/agents/` are tailored to dayahead: what the app is for,
+  its security rules (escape HTML, keep who-bid-what off public pages, bind
+  to localhost) and its style tokens.
+- The toy app (November 2026): **dayahead**, a day-ahead power auction,
+  replaced the earlier event-registration app.
 - `factory/checks.sh` runs ruff and pytest.
 - Trackers and hosts (November 2026): `factory/bin/job` talks to issues and
   to the code host through two small adapter sets, picked by `tracker`
@@ -265,4 +280,4 @@ PORT=8001 python3 -m evently.web   # events page on http://127.0.0.1:8001/
 
 The factory is © ZazenCodes and licensed under the
 [GNU General Public License v3](LICENSE). This repository, including the
-modifications above and the evently app, is distributed under the same licence.
+modifications above and the dayahead app, is distributed under the same licence.

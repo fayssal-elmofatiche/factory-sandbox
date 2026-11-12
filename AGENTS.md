@@ -1,14 +1,15 @@
-# evently
+# dayahead
 
-A small event-registration app: events with a capacity, registrations, a
-waitlist that promotes in order when someone cancels, and an HTML events page.
+A small day-ahead power auction: bids and offers per delivery hour in one
+bidding zone, a merit-order clearing price and cleared volume for each hour,
+and an HTML page of the hourly prices.
 It exists to demo a software factory, so keep changes small and well tested.
 
 ## Layout
 
-- `evently/registry.py` — the domain: `Event`, `Registry`, `RegistrationError`.
-- `evently/web.py` — the events page (`render_events`) and a stdlib HTTP server.
-- `evently/seed.py` — sample data for the dev server.
+- `dayahead/orderbook.py` — the domain: `Order`, `OrderBook`, `Clearing`, `OrderError`.
+- `dayahead/web.py` — the prices page (`render_prices`) and a stdlib HTTP server.
+- `dayahead/seed.py` — sample data for the dev server.
 - `tests/` — pytest tests. Every behaviour change comes with a test.
 
 ## Setup
@@ -19,10 +20,10 @@ no install step and no env files.
 ## Dev server
 
 ```bash
-PORT=<port> python3 -m evently.web
+PORT=<port> python3 -m dayahead.web
 ```
 
-It serves the events page at `http://127.0.0.1:<port>/`.
+It serves the prices page at `http://127.0.0.1:<port>/`.
 
 ## Validation
 
@@ -35,9 +36,10 @@ python3 -m pytest -q
 
 ## Conventions
 
-- Pure functions in `registry.py`; HTML only in `web.py`.
+- Pure functions in `orderbook.py`; HTML only in `web.py`.
 - Escape every user-supplied string that reaches HTML with `html.escape`.
-- Emails are stored stripped and lower-cased.
+- Participant names are stored stripped and lower-cased.
+- Prices are EUR/MWh, volumes MWh, delivery hours 0 to 23.
 
 ## Software factory
 

@@ -34,7 +34,7 @@ that, scoped so it can land as one small pull request.
 
 ## Decide
 
-evently is a small event-registration app: events with a capacity, registrations, a waitlist, and an HTML events page. Requests about registering for events, managing attendance and showing events belong; anything else does not.
+dayahead is a small day-ahead power auction: bids and offers per delivery hour, a merit-order clearing price and volume per hour, and an HTML page of the hourly prices. Requests about placing and managing orders, clearing the auction and showing its results belong; anything else does not.
 
 - **ACCEPT** when the request is clear, fits the project, and can be built and
   reviewed as one pull request. If it is too big, accept a smaller first slice

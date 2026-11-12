@@ -40,7 +40,7 @@ is in the main checkout; your one file goes there.
 
 ## Where the styling lives
 
-All styling is the `STYLE` string in `evently/web.py`: system-ui font, text `#1d1f23`, muted `#5d6168`, borders `#d9dce1`, 8px radius, cards as `li` elements. New UI reuses those values and classes (`.title`, `.meta`) instead of adding new colours.
+All styling is the `STYLE` string in `dayahead/web.py`: system-ui font, text `#1d1f23`, muted `#5d6168`, borders `#d9dce1`, an hourly table with right-aligned numbers and a left-aligned hour column. New UI reuses those values and the `.meta` class instead of adding new colours.
 
 ## Look at it
 

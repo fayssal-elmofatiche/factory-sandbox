@@ -79,7 +79,7 @@ def merge_a_job(box, issue="1"):
     run([job, "advance", job_id, "spec"], cwd=box)
     (folder / "spec.md").write_text("# Spec\n")
     run([job, "advance", job_id, "build"], cwd=box)
-    with open(tree / "evently" / "seed.py", "a") as f:
+    with open(tree / "dayahead" / "seed.py", "a") as f:
         f.write("# a change\n")
     run(["git", *GIT_ID, "commit", "-qam", "a change"], cwd=tree)
     run(["git", "push", "-q", "-u", "origin", f"factory/{job_id}"], cwd=tree)
@@ -209,7 +209,7 @@ def test_reset_discards_the_work_and_keeps_the_setup(sandbox):
 
     assert cfg(sandbox)["concurrency"] == 1
     assert (sandbox / "AGENTS.md").read_text().endswith("A note for the next run.\n")
-    assert "# a change" not in (sandbox / "evently" / "seed.py").read_text()
+    assert "# a change" not in (sandbox / "dayahead" / "seed.py").read_text()
     assert not (sandbox / "factory" / "jobs" / job_id).exists()
     assert list((sandbox / "factory" / "runs").glob(f"*/{job_id}/job.json"))
     assert "1\topen\tfactory" in fx(sandbox, "issues").stdout
@@ -246,10 +246,10 @@ def test_reset_asks_first_and_does_nothing_on_no(sandbox):
 
 
 def test_reset_refuses_uncommitted_changes_outside_the_setup(sandbox):
-    with open(sandbox / "evently" / "seed.py", "a") as f:
+    with open(sandbox / "dayahead" / "seed.py", "a") as f:
         f.write("# stray\n")
     res = fx(sandbox, "reset", "--yes", check=False)
-    assert res.returncode != 0 and "evently/seed.py" in res.stderr
+    assert res.returncode != 0 and "dayahead/seed.py" in res.stderr
 
 
 def test_reset_and_baseline_refuse_a_repository_that_is_not_a_local_sandbox(tmp_path):
@@ -285,7 +285,7 @@ def escalate_a_job(box, issue="1"):
     run([job, "advance", job_id, "spec"], cwd=box)
     (folder / "spec.md").write_text("# spec\n")
     run([job, "advance", job_id, "build"], cwd=box)
-    with open(tree / "evently" / "seed.py", "a") as f:
+    with open(tree / "dayahead" / "seed.py", "a") as f:
         f.write("# escalated change\n")
     run(["git", *GIT_ID, "commit", "-qam", "Change"], cwd=tree)
     run(["git", "push", "-q", "-u", "origin", f"factory/{job_id}"], cwd=tree)

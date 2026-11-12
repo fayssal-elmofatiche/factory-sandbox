@@ -103,7 +103,7 @@ class Sandbox:
             f"DECISION: {decision}\nRISK: {risk}\nSURFACES: {surfaces}\nRESCOPED: no\n\n"
             "## Summary\n- x\n\n## Scope\nscope\n")
 
-    def commit(self, job_id, path="evently/seed.py", text="# change\n", push=True, message="Change"):
+    def commit(self, job_id, path="dayahead/seed.py", text="# change\n", push=True, message="Change"):
         wt = self.wt(job_id)
         target = wt / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -181,7 +181,7 @@ def test_a_job_runs_from_issue_to_merged(sb):
     assert "merged" in out
     s = sb.state(job_id)
     assert s["stage"] == "merged" and s["merged_sha"]
-    assert "# change" in sb.base_file("evently/seed.py")
+    assert "# change" in sb.base_file("dayahead/seed.py")
     assert sb.job("issues").stdout.splitlines()[0].split("\t")[1] == "closed"
     events = [json.loads(x) for x in (sb.dir(job_id) / "events.jsonl").read_text().splitlines()]
     assert [e["to"] for e in events if e["event"] == "advance"] == [
@@ -285,28 +285,28 @@ def test_checks_fail_when_tests_are_removed(sb):
 def test_a_commit_added_after_review_is_not_merged(sb):
     job_id = sb.to_review()
     sb.review(job_id)
-    sb.commit(job_id, path="evently/web.py", text="BACKDOOR = True\n", push=False)
+    sb.commit(job_id, path="dayahead/web.py", text="BACKDOOR = True\n", push=False)
     res = sb.job("advance", job_id, "approve", check=False)
     assert res.returncode == 1 and "after review" in res.stderr
 
 
 def test_a_commit_added_after_approval_is_not_merged(sb):
     job_id = sb.to_approved()
-    sb.commit(job_id, path="evently/web.py", text="BACKDOOR = True\n", push=False)
+    sb.commit(job_id, path="dayahead/web.py", text="BACKDOOR = True\n", push=False)
     res = sb.job("merge", job_id, check=False)
     assert res.returncode == 1 and "after review" in res.stderr
     assert sb.state(job_id)["stage"] == "approve"
-    assert "BACKDOOR" not in sb.base_file("evently/web.py")
+    assert "BACKDOOR" not in sb.base_file("dayahead/web.py")
 
 
 def test_a_commit_added_while_merging_sends_the_job_to_a_person(sb):
     job_id = sb.to_approved()
     sb.job("advance", job_id, "merging")
-    sb.commit(job_id, path="evently/web.py", text="BACKDOOR = True\n", push=False)
+    sb.commit(job_id, path="dayahead/web.py", text="BACKDOOR = True\n", push=False)
     sb.job("merge", job_id)
     s = sb.state(job_id)
     assert s["stage"] == "needs-human" and not s["merge_failed"]
-    assert "BACKDOOR" not in sb.base_file("evently/web.py")
+    assert "BACKDOOR" not in sb.base_file("dayahead/web.py")
 
 
 def test_a_verdict_rewritten_after_it_was_accepted_stops_the_job(sb):
@@ -328,7 +328,7 @@ def test_guard_keeps_agents_inside_their_job(sb):
     assert guard("intake", "Write", file_path="/etc/passwd") == 2
     assert guard("reviewer", "Write", file_path=str(jobs / "round-1" / "review-code.md")) == 0
     assert guard("reviewer", "Write", file_path=str(jobs / "decision.md")) == 2
-    code = sb.repo / ".worktrees" / "001-x" / "evently" / "web.py"
+    code = sb.repo / ".worktrees" / "001-x" / "dayahead" / "web.py"
     assert guard("builder", "Edit", file_path=str(code)) == 0
     assert guard("builder", "Write", file_path=str(jobs / "job.json")) == 2
     assert guard("builder", "Bash", command="cd w && git push -u origin factory/001-x") == 0
@@ -452,7 +452,7 @@ def test_jobs_created_at_once_get_different_numbers(sb):
 def test_two_merges_at_once_both_land(sb):
     a = sb.to_approved(title="First")
     b = sb.to_build(title="Second")
-    sb.commit(b, path="evently/__init__.py")
+    sb.commit(b, path="dayahead/__init__.py")
     sb.built(b)
     sb.job("advance", b, "gate")
     sb.gate(b)
@@ -472,7 +472,7 @@ def test_merge_syncs_again_when_the_base_moves(sb):
     sb.move_base()
     sb.job("merge", job_id)
     assert sb.state(job_id)["stage"] == "merged"
-    assert "note" in sb.base_file("README.md") and "# change" in sb.base_file("evently/seed.py")
+    assert "note" in sb.base_file("README.md") and "# change" in sb.base_file("dayahead/seed.py")
 
 
 def test_a_failed_merge_can_be_retried_and_keeps_the_approval(sb):
@@ -500,7 +500,7 @@ def test_auto_merge_off_leaves_the_merge_to_a_person(sb):
     job_id = sb.to_approved()
     sb.job("merge", job_id)
     assert sb.state(job_id)["stage"] == "needs-human"
-    assert "# change" not in sb.base_file("evently/seed.py")
+    assert "# change" not in sb.base_file("dayahead/seed.py")
     sh(["git", "merge", "-q", "--no-ff", "-m", "by hand", f"factory/{job_id}"], sb.repo)
     sh(["git", "push", "-q", "origin", "main"], sb.repo)
     sb.job("queue")
@@ -524,7 +524,7 @@ def test_a_person_approves_an_escalated_job_and_the_factory_merges_it(sb):
     sb.job("approve", job_id)
     s = sb.state(job_id)
     assert s["stage"] == "merged" and s["human_approved"] == "Op"
-    assert "# change" in sb.base_file("evently/seed.py")
+    assert "# change" in sb.base_file("dayahead/seed.py")
     d = sb.dir(job_id)
     decision = (d / "decision.md").read_text()
     assert decision.startswith("APPROVE") and "Approved by @Op" in decision
@@ -554,9 +554,9 @@ def test_a_job_that_never_passed_the_gate_cannot_be_approved(sb):
 
 def test_a_commit_added_after_the_gate_cannot_be_approved(sb):
     job_id = escalated(sb)
-    sb.commit(job_id, path="evently/web.py", text="BACKDOOR = True\n", push=False)
+    sb.commit(job_id, path="dayahead/web.py", text="BACKDOOR = True\n", push=False)
     assert sb.job("approve", job_id, check=False).returncode == 1
-    assert "BACKDOOR" not in sb.base_file("evently/web.py")
+    assert "BACKDOOR" not in sb.base_file("dayahead/web.py")
 
 
 def test_feedback_after_an_approval_attempt_starts_clean(sb):
@@ -653,7 +653,7 @@ def test_a_body_cannot_smuggle_in_a_comment(sb):
 def test_the_diff_adds_the_reviewers_the_issue_did_not_ask_for(sb):
     job_id = sb.to_build()
     assert list(sb.state(job_id)["agents"]["reviewers"]) == ["code"]
-    sb.commit(job_id, path="evently/web.py", text="# touched\n")
+    sb.commit(job_id, path="dayahead/web.py", text="# touched\n")
     sb.built(job_id)
     sb.job("advance", job_id, "gate")
     sb.gate(job_id)
@@ -729,7 +729,7 @@ def test_show_prints_the_decision_and_what_to_do(sb):
     sb.job("park", job_id, stdin="looks off")
     out = sb.job("show", job_id).stdout
     assert "decision.md: ESCALATE" in out and "looks off" in out
-    assert f"factory/bin/job feedback {job_id}" in out and "evently/seed.py" in out
+    assert f"factory/bin/job feedback {job_id}" in out and "dayahead/seed.py" in out
 
 
 def test_local_setup_makes_a_working_sandbox(tmp_path):
