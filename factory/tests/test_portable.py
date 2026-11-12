@@ -5,6 +5,7 @@ each one checks the branch for the system it runs on.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -75,3 +76,22 @@ def test_lock_lets_one_holder_in_at_a_time(tmp_path):
     first.wait(timeout=10)
     assert second.stdout.strip() == "locked" and waited > 0.5
     assert os.path.exists(path)
+
+
+def test_bash_skips_the_wsl_shortcuts_that_come_first_on_path(tmp_path):
+    """PowerShell's PATH often has WindowsApps\bash.exe (a shortcut to WSL) before Git's."""
+    if not portable.WINDOWS:
+        return
+    for name in ("WindowsApps", "System32"):
+        fake = tmp_path / name
+        fake.mkdir()
+        shutil.copy(sys.executable, fake / "bash.exe")
+    env = {**os.environ, "PATH": os.pathsep.join([str(tmp_path / "WindowsApps"), str(tmp_path / "System32"),
+                                                  os.environ["PATH"]])}
+    code = (f"import sys; sys.path.insert(0, r'{ROOT / 'factory' / 'bin'}');"
+            " import portable; print(portable.bash())")
+    res = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    found = res.stdout.strip()
+    assert found and str(tmp_path) not in found
+    res = subprocess.run([found, "-c", "uname -s"], capture_output=True, text=True)
+    assert "Linux" not in res.stdout

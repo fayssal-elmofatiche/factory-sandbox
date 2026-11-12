@@ -31,21 +31,30 @@ def script(path, *args):
 def bash():
     """The bash that runs checks.sh and the setup scripts.
 
-    On Windows that is Git Bash. A plain "bash" may be System32's bash.exe,
-    which starts WSL instead: a different machine, with other tools.
+    On Windows that is Git Bash, found through git itself. The first "bash" on
+    PATH is often a shortcut to WSL instead (System32\\bash.exe or
+    WindowsApps\\bash.exe): a different machine, with other tools, that can't
+    read Windows paths.
     """
     if not WINDOWS:
         return "bash"
-    found = shutil.which("bash")
-    if found and "system32" not in found.lower():
-        return found
+    roots = []
+    try:  # <Git>/mingw64/libexec/git-core
+        exec_path = subprocess.run(["git", "--exec-path"], capture_output=True, text=True).stdout.strip()
+        if exec_path:
+            roots.append(Path(exec_path).parents[2])
+    except OSError:
+        pass
     git = shutil.which("git")
-    if git:
-        # git.exe lives in <Git>/cmd or <Git>/bin (or <Git>/mingw64/bin); bash.exe in <Git>/bin.
-        for root in (Path(git).parent.parent, Path(git).parent.parent.parent):
-            candidate = root / "bin" / "bash.exe"
+    if git:  # git.exe lives in <Git>/cmd, <Git>/bin or <Git>/mingw64/bin
+        roots += [Path(git).parent.parent, Path(git).parent.parent.parent]
+    for root in roots:
+        for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
             if candidate.exists():
                 return str(candidate)
+    found = shutil.which("bash")
+    if found and not any(part in found.lower() for part in ("system32", "windowsapps")):
+        return found
     sys.exit("factory: Git Bash not found. Install Git for Windows (https://git-scm.com/download/win).")
 
 
