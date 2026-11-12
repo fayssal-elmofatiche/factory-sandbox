@@ -390,7 +390,7 @@ const STATIONS = [
   { id: 'Spec', kind: 'an agent', does: 'Writes the specification: a numbered list of what the change must do, each item testable. The builder, the reviewers and the approver all work from this list.', reads: '<code>issue.md</code>, <code>intake.md</code>', writes: '<code>spec.md</code>' },
   { id: 'Build', kind: 'an agent', does: 'Writes the code and its tests. It works on a separate copy of the code (a branch), so the main version stays untouched until the end.', reads: '<code>spec.md</code>', writes: 'commits and <code>build.md</code>' },
   { id: 'Gate', kind: 'a script', does: 'Runs the automated tests and style checks of the project on the new code. If they fail, or the change touched a protected file, the job does not pass.', reads: 'the new code, and <code>checks.sh</code> from the main version', writes: '<code>checks.md</code>' },
-  { id: 'Review', kind: 'agents, chosen by risk', does: 'Up to four reviewers read the change at the same time, each looking for one kind of problem. The job waits for all of them.' },
+  { id: 'Review', kind: 'agents, chosen by risk', does: 'Up to four reviewers read the change at the same time, each looking for one kind of problem. Each one writes its verdict, PASS or CHANGES, in its own file. The job waits for all of them.', reads: 'the change, <code>spec.md</code>, <code>build.md</code>, <code>checks.md</code>', writes: 'one file per reviewer, such as <code>review-code.md</code>' },
   { id: 'Approve', kind: 'an agent', does: 'Checks each item of the specification against the evidence. It approves, or hands the decision to a person.', reads: 'everything above', writes: '<code>decision.md</code>' },
   { id: 'Merge', kind: 'a script', does: 'Brings in the latest main version, runs the checks once more, then adds the change to the main code and closes the request.', reads: '<code>decision.md</code>', writes: 'the merge' },
 ]
@@ -567,8 +567,8 @@ const SLIDES = [
 
   { name: 'Stations', side: 'left', steps: 8, frame: (s) => [POS[ORDER[s]][0] + (s === 5 ? 330 : 0), Y + 40, s === 5 ? 2150 : 1700],
     html: (s) => { const t = STATIONS[s]; return `<p class="kicker">Station ${s + 1} of 8, ${t.kind}</p><h2>${t.id}</h2><p>${t.does}</p>
-      ${s === 5 ? `<table><tr><td>Code</td><td class="m">Haiku</td><td>every job; Sonnet when risky</td></tr><tr><td>UX</td><td class="m">Sonnet</td><td>interface changes</td></tr><tr><td>UI design</td><td class="m">Haiku</td><td>interface changes</td></tr><tr><td>Security</td><td class="m">Opus</td><td>security or personal data</td></tr></table>`
-        : `<dl><dt>Reads</dt><dd>${t.reads}</dd><dt>Writes</dt><dd>${t.writes}</dd></dl>`}` },
+      ${s === 5 ? `<table><tr><td>Code</td><td class="m">Haiku</td><td>every job; Sonnet when risky</td></tr><tr><td>UX</td><td class="m">Sonnet</td><td>interface changes</td></tr><tr><td>UI design</td><td class="m">Haiku</td><td>interface changes</td></tr><tr><td>Security</td><td class="m">Opus</td><td>security or personal data</td></tr></table>` : ''}
+      <dl><dt>Reads</dt><dd>${t.reads}</dd><dt>Writes</dt><dd>${t.writes}</dd></dl>` },
     board: (s) => reach(s, FULL) },
 
   { name: 'Handover', side: 'bottom', frame: [2760, 1130, 5200], steps: 7,
