@@ -40,7 +40,7 @@ is in the main checkout; your one file goes there.
 
 ## Where the styling lives
 
-All styling is the `STYLE` string in `dayahead/web.py`: system-ui font, text `#1d1f23`, muted `#5d6168`, borders `#d9dce1`, an hourly table with right-aligned numbers and a left-aligned hour column. New UI reuses those values and the `.meta` class instead of adding new colours.
+All styling is the `STYLE` string in `dayahead/web.py`. Colours are CSS variables on `:root` with a dark-mode set: `--ink` `#1d1f23`, `--muted` `#5d6168`, `--line` `#d9dce1`, `--surface`, `--panel` `#f5f6f8`, `--accent` `#1f5fbf`, `--negative` `#b3261e`. System-ui font, tabular numbers, 8px radius on panels. The page is a header (`.eyebrow`, `h1`, `.meta`), summary tiles (`.summary`), and the hourly table in `.table-wrap`, with numbers right-aligned and the hour as a row header. Below 30rem the layout tightens and the page must not scroll sideways. New UI uses these variables and classes, never hard-coded colours, and works in both light and dark mode.
 
 ## Look at it
 
