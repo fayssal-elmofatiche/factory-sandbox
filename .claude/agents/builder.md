@@ -93,7 +93,9 @@ command you ran and its result, or what the page showed.
   If `agent-browser` isn't installed (`command -v agent-browser` prints nothing), don't install
   anything: fetch the page with `curl -s http://127.0.0.1:<port>/` and judge the HTML, and say in
   your file that you checked the markup, not a rendered page. Where `lsof` is missing, use
-  `ss -ltnp` or `fuser <port>/tcp` to find the server's PID.
+  `ss -ltnp` or `fuser <port>/tcp` to find the server's PID. On Windows (Git Bash),
+`netstat -ano | grep ":<port> .*LISTENING"` gives the PID and `taskkill //PID <pid> //T //F`
+stops it.
 
 ## Commit, push, PR
 

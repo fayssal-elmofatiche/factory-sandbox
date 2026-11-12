@@ -116,14 +116,34 @@ def cmd_doctor():
     rows.append(("ok" if remote.returncode == 0 else "MISSING", "git remote origin",
                  remote.stdout.strip() if remote.returncode == 0 else "the factory branches every job from origin"))
 
-    for tool, why in (("agent-browser", "needed for issues that change the web page"),
-                      ("lsof", "used to stop a job's dev server")):
+    tools = [("agent-browser", "needed for issues that change the web page")]
+    bash = "bash"
+    if portable.WINDOWS:
+        # checks.sh and the agents' hooks run in Git Bash and call `python3` there. Windows'
+        # own python3 is often only a shortcut to the Microsoft Store, which runs nothing.
+        try:
+            bash = portable.bash()
+            rows.append(("ok", "Git Bash", bash))
+        except SystemExit:
+            bash = None
+            rows.append(("MISSING", "Git Bash", "install Git for Windows: https://git-scm.com/download/win"))
+        if bash:
+            py = sh(bash, "-c", "python3 -c 'import sys; print(sys.version_info >= (3, 10), sys.version.split()[0])'")
+            ok = py.returncode == 0 and py.stdout.startswith("True")
+            rows.append(("ok" if ok else "MISSING", "python3 in Git Bash",
+                         py.stdout.split()[-1] if ok else "install one: uv python install 3.14 --default"))
+    else:  # Windows agents use netstat and taskkill instead
+        tools.append(("lsof", "used to stop a job's dev server"))
+    for tool, why in tools:
         rows.append(("ok" if have(tool) else "warn", tool, "" if have(tool) else why))
 
-    checks = sh(portable.bash(), str(FACTORY / "checks.sh"))
-    tail = (checks.stdout or checks.stderr).strip().splitlines()
-    rows.append(("ok" if checks.returncode == 0 else "MISSING", "factory/checks.sh passes",
-                 tail[-1] if tail else ""))
+    if bash:
+        checks = sh(bash, str(FACTORY / "checks.sh"))
+        tail = (checks.stdout or checks.stderr).strip().splitlines()
+        rows.append(("ok" if checks.returncode == 0 else "MISSING", "factory/checks.sh passes",
+                     tail[-1] if tail else ""))
+    else:
+        rows.append(("MISSING", "factory/checks.sh passes", "needs Git Bash"))
 
     width = max(len(name) for _, name, _ in rows)
     for level, name, detail in rows:
