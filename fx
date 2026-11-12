@@ -291,12 +291,12 @@ def cmd_deck():
     return 0
 
 
-def cmd_run(args):
+def cmd_run(args, prompt=None):
     if not shutil.which("claude"):
         die("Claude Code is not installed; run ./fx doctor")
     if not is_set_up():
         cmd_setup(quiet=True)
-    prompt = "/factory run" + (f" {args[0]}" if args else "")
+    prompt = prompt or "/factory run" + (f" {args[0]}" if args else "")
     print(f"Starting Claude Code in {REPO} with: {prompt}")
     os.chdir(REPO)
     if portable.WINDOWS:  # Windows has no exec: run Claude Code and pass its exit code on
@@ -797,6 +797,12 @@ COMMANDS = [
     ("run", "open Claude Code on /factory run",
      "Opens Claude Code in this folder and types `/factory run`, or `/factory run <issue>`\n"
      "for one issue. From there the session is yours to watch and approve."),
+    ("sweep", "open Claude Code on /factory sweep: propose work as unlabelled issues",
+     "Opens Claude Code in this folder and types `/factory sweep <kind>`. The sweep reads\n"
+     "the base branch for perf, security, cleanup or docs work and files at most\n"
+     "sweep.max_issues findings (config.json) as issues WITHOUT the factory label,\n"
+     "skipping any that match an open issue. Nothing it files runs until you queue it\n"
+     "with `fx queue <issue>`. It writes no code."),
     ("issues", "list the issues: ref, state, labels, title", None),
     ("queue", "label an issue so the next run picks it up", None),
     ("unqueue", "remove that label from an issue", None),
@@ -854,6 +860,8 @@ def build_parser():
                                     formatter_class=fmt)
     made["up"].add_argument("--no-open", action="store_true", help="start the dashboard without opening a browser")
     made["run"].add_argument("issue", nargs="?", help="run only this issue")
+    made["sweep"].add_argument("kind", choices=["perf", "security", "cleanup", "docs"],
+                               help="perf, security, cleanup or docs")
     made["queue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     made["unqueue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     for name in ("show", "approve", "feedback", "reject", "retry", "park"):
@@ -891,6 +899,8 @@ def dispatch(ns):
         return cmd_deck()
     if cmd == "run":
         return cmd_run([ns.issue] if ns.issue else [])
+    if cmd == "sweep":
+        return cmd_run([], prompt=f"/factory sweep {ns.kind}")
     if cmd == "issues":
         return job("issues")
     if cmd in {"queue", "unqueue"}:

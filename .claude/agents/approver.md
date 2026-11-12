@@ -52,6 +52,12 @@ APPROVE only if all of these hold:
 - The final round's `checks.md` says `GATE: PASS`, every review in it is
   `VERDICT: PASS`, and no Note in them describes a real problem.
 - The change stays inside intake's Scope.
+- build.md's `## Risk and impact` matches the diff: compare its Risk,
+  Structure and Outside the diff lines with `git diff --stat` and the code. It
+  is the builder's claim, not evidence. If the section is missing, or the
+  built change is riskier than intake's `RISK:` rated it (more modules, a
+  changed interface or data format, a wider surface than the Scope), escalate
+  and say so in Why: which rating, and what in the diff exceeds it.
 
 ESCALATE if any of them fails, or if the change:
 

@@ -29,6 +29,8 @@ Usage:
   job summary [<job>...]         table of jobs: issue, stage, round, cost, time
   job answer <job>               post the author's answer (stdin) on the job's issue
   job new-issue <title>          file a new `factory` issue with the body on stdin; prints its ref
+  job new-issue --no-queue <title>  the same, without the label: it waits for a person to queue it
+  job propose <kind>             file a sweep's findings (JSON on stdin) as unlabelled issues, capped, no duplicates
   job issues                     list every issue: ref, state, labels, title
   job label <issue> <label>      add a label to an issue (`factory` queues it)
   job unlabel <issue> <label>    remove a label from an issue
@@ -294,11 +296,11 @@ class FilesTracker:
         issue["state"] = "closed"
         self.write(issue)
 
-    def create(self, title, body):
+    def create(self, title, body, queue=True):
         ISSUES.mkdir(parents=True, exist_ok=True)
         taken = [int(p.stem) for p in ISSUES.glob("*.md") if p.stem.isascii() and p.stem.isdigit()]
         ref = max(taken, default=0) + 1
-        self.write({"number": ref, "title": title, "state": "open", "labels": [LABELS["queue"]],
+        self.write({"number": ref, "title": title, "state": "open", "labels": [LABELS["queue"]] if queue else [],
                     "author": operator(), "created": now(), "body": body, "comments": []})
         return ref
 
@@ -360,9 +362,10 @@ class KataTracker:
     def close(self, ref, note, sha):
         kata("close", str(ref), "--done", "--commit", sha, "--message", note)
 
-    def create(self, title, body):
+    def create(self, title, body, queue=True):
         ref = kata_json("create", title, "--body", body)["issue"]["short_id"]
-        kata("label", "add", ref, LABELS["queue"])
+        if queue:
+            kata("label", "add", ref, LABELS["queue"])
         return ref
 
     def edited_after_label(self, ref):
@@ -1390,10 +1393,14 @@ def cmd_show(job):
     print(f"{job['id']}  issue #{job['issue']}  {job['title']}")
     print(f"stage {job['stage']}, round {job['round']}, cost ${job['cost_usd']:.2f}"
           + (f", {HOST.where(job)}" if HOST.where(job) else ""))
-    for name in ("intake.md", "decision.md"):
+    shown = ("Summary", "Why", "For the human", "Questions")
+    # build.md's Risk and impact is the builder's claim, shown for the person to
+    # weigh; nothing reads it to route or merge, which keep intake's RISK.
+    for name, parts in (("intake.md", shown), ("build.md", ("Summary", "Risk and impact")),
+                        ("decision.md", shown)):
         if (d / name).exists():
             print(f"\n{name}: {first_line(d / name)}")
-            for part in ("Summary", "Why", "For the human", "Questions"):
+            for part in parts:
                 text = section(d / name, part)
                 if text:
                     print(f"  {part}:\n" + "\n".join("    " + line for line in text.splitlines()))
@@ -1429,10 +1436,66 @@ def cmd_answer(job, text):
     print(f"{job['id']}: answer posted on issue #{job['issue']}")
 
 
-def cmd_new_issue(title, body):
+def cmd_new_issue(title, body, queue=True):
     if not body.strip():
         die("no issue body on stdin")
-    print(TRACKER.create(" ".join(title.split()), body.strip()))
+    print(TRACKER.create(" ".join(title.split()), body.strip(), queue=queue))
+
+
+# ---- Sweeps: findings a person decides on ----------------------------------
+#
+# A sweep reads the base branch and proposes work. Its agent writes findings to
+# a file and nothing else; this command files them. Each becomes an issue
+# WITHOUT the queue label, so nothing a sweep finds runs until a person queues
+# it (`./fx queue <n>`). Intake, routing and human_merge then apply as for any
+# issue: a sweep can't make its own finding low risk by calling it so.
+
+SWEEP_KINDS = ("perf", "security", "cleanup", "docs")
+FINDING_FIELDS = ("title", "file", "evidence", "scope")
+
+
+def same_title(title):
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", title.lower()).split())
+
+
+def finding_body(kind, f, commit):
+    seen = f" at `{commit[:12]}`" if commit else ""
+    return (f"Found by the `{kind}` sweep on `{BASE}`{seen}. A sweep only proposes: this issue does not run "
+            f"until a person queues it with `./fx queue <ref>`.\n\n"
+            f"**File:** `{f['file']}`\n\n## Evidence\n\n{f['evidence']}\n\n## Suggested scope\n\n{f['scope']}")
+
+
+def cmd_propose(kind, text):
+    """File at most sweep.max_issues findings, unlabelled, skipping any whose
+    title matches an open issue or an earlier finding in the same run."""
+    require(kind in SWEEP_KINDS, f"unknown sweep kind {kind!r}: one of {', '.join(SWEEP_KINDS)}")
+    try:
+        findings = json.loads(text)
+    except ValueError as e:
+        raise Refused(f"the findings are not JSON: {e}") from None
+    require(isinstance(findings, list), "the findings are a JSON list of objects")
+    for n, f in enumerate(findings, 1):
+        require(isinstance(f, dict) and all(isinstance(f.get(k), str) and f[k].strip() for k in FINDING_FIELDS),
+                f"finding {n} needs non-empty strings for {', '.join(FINDING_FIELDS)}")
+    cap = int((CONFIG.get("sweep") or {}).get("max_issues", 3))
+    taken = {same_title(title): ref for ref, state, _, title in TRACKER.rows() if state.lower() == "open"}
+    commit = run(["git", "rev-parse", f"origin/{BASE}"], check=False).stdout.strip()
+    filed = 0
+    for f in findings:
+        title = " ".join(f["title"].split())
+        key = same_title(title)
+        if key in taken:
+            print(f"skip\tduplicate of {taken[key]}\t{title}")
+            continue
+        if filed >= cap:
+            print(f"skip\tover the cap of {cap} per run\t{title}")
+            continue
+        clean = {k: SECRETS.sub("[redacted]", f[k].strip()) for k in FINDING_FIELDS}
+        ref = TRACKER.create(title, finding_body(kind, clean, commit), queue=False)
+        taken[key] = ref
+        filed += 1
+        print(f"filed\t{ref}\t{title}")
+    print(f"{filed} filed, unlabelled. Queue one with ./fx queue <ref>.")
 
 
 def cmd_issues():
@@ -1475,7 +1538,7 @@ def cmd_summary(args):
 
 
 READ_ONLY = {"summary", "issues", "show"}
-TAKES_STDIN = {"feedback", "reject", "park", "answer", "new-issue"}
+TAKES_STDIN = {"feedback", "reject", "park", "answer", "new-issue", "propose"}
 
 
 def main(argv):
@@ -1520,6 +1583,10 @@ def main(argv):
             cmd_answer(resolve(args[0]), text)
         elif cmd == "new-issue" and len(args) == 1:
             cmd_new_issue(args[0], text)
+        elif cmd == "new-issue" and len(args) == 2 and args[0] == "--no-queue":
+            cmd_new_issue(args[1], text, queue=False)
+        elif cmd == "propose" and len(args) == 1:
+            cmd_propose(args[0], text)
         elif cmd == "agents" and len(args) == 2:
             cmd_agents(sync(resolve(args[0])), args[1])
         elif cmd == "sync" and len(args) == 1:
