@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Create a fully local copy of this sandbox: no GitHub, no pull requests.
+# Make another sandbox from this checkout: a copy that runs the factory locally.
 #
 #   factory/local-setup.sh <target-dir> [--tracker files|kata] [--project <kata-project>]
 #
-# Makes <target-dir> (a working checkout) and <target-dir>.git (a bare
-# repository that plays the part of `origin`), switches the factory to a local
-# tracker and adds three demo issues, the first one labeled `factory`.
+# You don't need this to run the factory: a clone sets itself up on the first
+# `./fx run` (or `./fx setup`). Use it for a second, separate copy, for example
+# to rehearse without touching your own.
+#
+# Clones this checkout's current commit into <target-dir> as `main`, then runs
+# `./fx setup` there: <target-dir>.git, a repository on disk, plays `origin`,
+# and the demo issues go into the tracker.
 #
 #   files (default)  issues are Markdown files in factory/issues/; nothing to install
 #   kata             issues live in kata; needs `kata` on PATH
@@ -32,56 +36,43 @@ fi
 SRC="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 mkdir -p "$(dirname "$TARGET_ARG")"
 TARGET="$(cd "$(dirname "$TARGET_ARG")" && pwd)/$(basename "$TARGET_ARG")"
-ORIGIN="$TARGET.git"
 PROJECT="${PROJECT:-$(basename "$TARGET")}"
 BASE="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['base_branch'])" "$SRC/factory/config.json")"
 
 [ ! -e "$TARGET" ] || { echo "$TARGET already exists" >&2; exit 1; }
-[ ! -e "$ORIGIN" ] || { echo "$ORIGIN already exists" >&2; exit 1; }
+[ ! -e "$TARGET.git" ] || { echo "$TARGET.git already exists" >&2; exit 1; }
 
-git init --quiet --bare "$ORIGIN"
-git -C "$ORIGIN" symbolic-ref HEAD "refs/heads/$BASE"
-git -C "$SRC" push --quiet "$ORIGIN" "HEAD:refs/heads/$BASE"
-git clone --quiet "$ORIGIN" "$TARGET"
+git clone --quiet --no-checkout "$SRC" "$TARGET"
 cd "$TARGET"
+git checkout --quiet -B "$BASE" "$(git -C "$SRC" rev-parse HEAD)"
 # A commit needs an author; fall back to a local one on a machine with none set.
 git config user.name >/dev/null || git config user.name "${USER:-factory}"
 git config user.email >/dev/null || git config user.email "${USER:-factory}@localhost"
 
-# Switch the tracker without reformatting the file.
-TRACKER="$TRACKER" python3 - <<'PY'
-import json, os, pathlib
-tracker = os.environ["TRACKER"]
+if [ "$TRACKER" = kata ]; then
+  # Switch the tracker without reformatting the file.
+  python3 - <<'PY'
+import json, pathlib
 p = pathlib.Path("factory/config.json")
 s = p.read_text()
 if '"tracker"' not in s:
-    s = s.replace("{\n", '{\n  "tracker": "%s",\n' % tracker, 1)
+    s = s.replace("{\n", '{\n  "tracker": "kata",\n', 1)
 else:
-    s = s.replace('"tracker": "%s"' % json.loads(s)["tracker"], '"tracker": "%s"' % tracker, 1)
-assert json.loads(s)["tracker"] == tracker
+    s = s.replace('"tracker": "%s"' % json.loads(s)["tracker"], '"tracker": "kata"', 1)
+assert json.loads(s)["tracker"] == "kata"
 p.write_text(s, newline="\n")  # LF on Windows too
 PY
-git add factory/config.json
-
-if [ "$TRACKER" = kata ]; then
   # kata refuses to parse a remote that is a path, so bind the project while
   # the checkout has no remote.
   git remote remove origin
   kata init --project "$PROJECT" >/dev/null
-  git remote add origin "$ORIGIN"
-  git fetch --quiet origin
-  git branch --quiet --set-upstream-to="origin/$BASE" "$BASE"
-  git add .kata.toml .gitignore
+  git add factory/config.json .kata.toml .gitignore
+  git commit --quiet -m "Run the factory with the kata tracker"
 fi
-# A source that is already in this mode has nothing to commit.
-git diff --cached --quiet || git commit --quiet -m "Run the factory in local mode (tracker: $TRACKER)"
-git push --quiet origin "$BASE"
 
-# Demo issues: the first is labeled `factory`, so the first run has work to do.
-if [ "$TRACKER" = files ]; then
-  mkdir -p factory/issues
-  cp factory/demo-issues/*.md factory/issues/
-else
+./fx setup >/dev/null
+
+if [ "$TRACKER" = kata ]; then
   python3 - <<'PY'
 import pathlib, re, subprocess
 for path in sorted(pathlib.Path("factory/demo-issues").glob("*.md")):
@@ -95,16 +86,13 @@ for path in sorted(pathlib.Path("factory/demo-issues").glob("*.md")):
 PY
 fi
 
-# Remember this state, so `./fx reset` can return to it after a rehearsal.
-if [ "$TRACKER" = files ]; then ./fx baseline >/dev/null; fi
-
 cat <<MSG
 Local sandbox ready (tracker: $TRACKER).
   checkout: $TARGET
-  origin:   $ORIGIN
+  origin:   $TARGET.git
 
 Issues:
-$(factory/bin/job issues | sed 's/^/  /')
+$(python3 factory/bin/job issues | sed 's/^/  /')
 
 Next:
   cd $TARGET
