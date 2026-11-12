@@ -126,11 +126,12 @@
   .flag.done { color: var(--merged); }
   .card.rejected .feature { text-decoration: line-through; text-decoration-color: var(--rule); }
   .flag.wait { color: var(--changes); }
-  .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  /* At 13px type a narrow column can't hold the slug and the flag side by side; the flag drops a line. */
+  .card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-bottom: 4px; }
   .num { font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
   /* A long slug wraps to two lines at most; the card's title attribute has all of it. */
   .card-top .num {
-    min-width: 0; overflow-wrap: anywhere; overflow: hidden;
+    flex: 1 1 9em; min-width: 0; overflow-wrap: anywhere; overflow: hidden;
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   }
   .pulse {
@@ -142,10 +143,10 @@
     text-transform: uppercase; color: var(--human); white-space: nowrap;
   }
   .feature { font-size: .875rem; font-weight: 400; line-height: 1.4; margin: 0 0 6px; }
-  .links { display: flex; gap: 10px; font-family: var(--mono); font-size: .8125rem; }
+  .links { display: flex; flex-wrap: wrap; gap: 2px 10px; white-space: nowrap; font-family: var(--mono); font-size: .8125rem; }
   .links a { color: var(--active); text-decoration: none; }
   .links a:hover { text-decoration: underline; }
-  .meta { display: flex; gap: 10px; margin-top: 8px; font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; white-space: nowrap; margin-top: 8px; font-family: var(--mono); font-size: .8125rem; color: var(--muted); }
   /* Risk is a neutral tag, not a colour: red means a person must act, and risk alone doesn't. */
   .meta .risk { padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; }
   .meta .risk-medium { color: var(--text); border-color: var(--muted); }
