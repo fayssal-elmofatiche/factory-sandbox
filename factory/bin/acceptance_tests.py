@@ -6,18 +6,36 @@ them and never edit them. factory/bin/job runs them once on the base when the
 spec is accepted; factory/bin/gate runs them on every build; at merge they join
 the permanent suite in acceptance/.
 
-They run with an empty pytest configuration of their own, so neither the
-project's settings nor any conftest.py can change how they run, and with the
-worktree first on the import path, so they test the branch and nothing else.
+They run hermetically, so nothing the branch or the builder writes can change
+how they run or what they report:
+
+- from a copy in a fresh temporary folder, with an empty pytest configuration
+  of their own and --noconftest: no conftest.py anywhere (the worktree, the
+  main checkout, the job folder) is loaded, nor the project's settings;
+- with no plugins loaded from the environment: PYTEST_* variables are dropped
+  and plugin autoloading is off;
+- in an isolated Python (-I): PYTHON* variables, the current folder and the
+  script's folder are ignored, so a sitecustomize.py, usercustomize.py or
+  module in the worktree is not imported at start-up. pytest is imported
+  first, then the worktree is appended to the end of the import path: the
+  standard library and site-packages always win, and the worktree supplies
+  only the application's own packages. A file in the worktree named like a
+  module pytest or the standard library has can't stand in for it.
+
+The user's site-packages is added only when pytest is installed there.
 """
 
 import ast
+import importlib.util
 import os
 import re
+import shutil
+import site
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 import portable
 
@@ -56,16 +74,43 @@ def timed(cmd, cwd, timeout, what, env=None):
     return code, out, int(time.monotonic() - start)
 
 
+# Started with -I: pytest first, then the worktree at the END of sys.path, so the
+# standard library and site-packages are always found before anything the branch adds.
+BOOTSTRAP = ("import sys, site; u = sys.argv[1]; u and site.addsitedir(u); import pytest; "
+             "sys.path.append(sys.argv[2]); sys.exit(pytest.main(sys.argv[3:]))")
+
+
+def user_site():
+    """The user's site-packages when pytest is installed there, else "". -I
+    leaves it out, and only the operator, never the branch, installs there."""
+    spec = importlib.util.find_spec("pytest")
+    users = site.getusersitepackages() if site.ENABLE_USER_SITE else ""
+    if users and spec and spec.origin and Path(spec.origin).resolve().is_relative_to(Path(users).resolve()):
+        return users
+    return ""
+
+
+def environment():
+    """The environment without anything that loads pytest plugins or options."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("PYTEST_")}
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"  # for anything the tests start; -I ignores it for pytest itself
+    return env
+
+
 def run(worktree, tests, timeout):
     """Run the acceptance tests against a worktree: (exit code, output, seconds)."""
-    env = {**os.environ, "PYTHONPATH": str(worktree), "PYTHONDONTWRITEBYTECODE": "1"}
-    with tempfile.TemporaryDirectory() as empty:
-        ini = os.path.join(empty, "pytest.ini")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as here:
+        ini = os.path.join(here, "pytest.ini")
         with open(ini, "w") as f:
             f.write("[pytest]\n")
-        cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=",
-               "-c", ini, "--rootdir", str(worktree), "--import-mode=importlib", str(tests)]
-        code, out, seconds = timed(cmd, worktree, timeout, f"The acceptance tests ({NAME})", env)
+        copy = os.path.join(here, NAME)
+        shutil.copyfile(tests, copy)
+        utf8 = ["-X", "utf8"] if sys.flags.utf8_mode else []
+        cmd = [sys.executable, "-I", "-B", *utf8, "-c", BOOTSTRAP, user_site(), str(worktree),
+               "-q", "-p", "no:cacheprovider", "--noconftest", "-o", "addopts=", "-c", ini,
+               "--rootdir", str(worktree), "--import-mode=importlib", copy]
+        code, out, seconds = timed(cmd, worktree, timeout, f"The acceptance tests ({NAME})", environment())
     last = out.rstrip().splitlines()[-1] if out.strip() else ""
     if code == 0 and NOT_RUN.search(last):
         out += "\nacceptance: tests were skipped, deselected or marked as expected failures. Every test must run and pass.\n"

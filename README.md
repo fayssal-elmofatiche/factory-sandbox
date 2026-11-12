@@ -138,7 +138,10 @@ page or the public functions.
   already pass there only draw a warning.
 - The builder can read the tests but not edit them (the guard), and the gate
   refuses to run when the file differs from the sealed copy. The gate runs them
-  after `checks.sh`, from the main checkout, with an empty pytest configuration;
+  after `checks.sh`, hermetically: a copy in a fresh temporary folder, an empty
+  pytest configuration, no `conftest.py` and no plugins from the environment,
+  and an isolated Python that finds the standard library and site-packages
+  before anything in the worktree (see `factory/bin/acceptance_tests.py`).
   `checks.md` has an `## Acceptance tests` section. Skipped tests fail, as in
   `checks.sh`. The builder's Stop hook runs them too.
 - At merge, `factory/bin/job merge` commits them as

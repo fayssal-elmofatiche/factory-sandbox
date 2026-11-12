@@ -1288,3 +1288,93 @@ def test_guard_lets_only_the_spec_writer_write_the_acceptance_tests(sb):
     assert guard("builder", tests) == 2
     assert guard("reviewer", tests) == 2
     assert guard("builder", sb.repo / ".worktrees" / "001-x" / "acceptance" / "test_001_x.py") == 0
+
+
+# ---- the acceptance tests run hermetically -----------------------------------------
+
+# A pytest plugin that reports every test as passed.
+ALL_PASS = ('import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\n'
+            'def pytest_runtest_makereport(item, call):\n    outcome = yield\n'
+            '    outcome.get_result().outcome = "passed"\n')
+# A module that ends the process at once with exit 0, before pytest reports anything.
+EXIT_0 = "import os\n\nos._exit(0)\n"
+# Fails unless app.VALUE is 1; imports from the standard library the way a test would:
+# json is loaded before pytest runs the test, colorsys is not.
+FAILING = ('import colorsys\nimport json\n\nfrom app import VALUE\n\n\n'
+           'def test_ac1_value_is_one():\n    """AC1."""\n    assert colorsys\n'
+           '    assert json.loads("1") == VALUE\n')
+
+
+def test_gate_ignores_a_conftest_written_into_the_main_checkout(sb):
+    """A builder can write ../../factory/conftest.py with a shell redirect."""
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    (sb.repo / "factory" / "conftest.py").write_text(ALL_PASS)
+    (sb.repo / "conftest.py").write_text(ALL_PASS)
+    res = gate_after(sb, job_id)  # the branch doesn't add THING
+    assert res.returncode == 1, res.stdout
+    assert "1 failed" in (sb.dir(job_id) / "round-1" / "acceptance.log").read_text()
+
+
+def test_gate_fails_a_branch_that_adds_a_sitecustomize(sb):
+    job_id = sb.to_build(acceptance=NEEDS_THING)
+    sb.commit(job_id, path="evilplugin.py", text=ALL_PASS, push=False)
+    res = gate_after(sb, job_id, path="sitecustomize.py",
+                     text='import os\n\nos.environ["PYTEST_PLUGINS"] = "evilplugin"\n')
+    assert res.returncode == 1 and "sitecustomize.py" in res.stdout
+    assert "1 failed" in (sb.dir(job_id) / "round-1" / "acceptance.log").read_text()
+
+
+@pytest.mark.parametrize("path", ["usercustomize.py", "dayahead/sitecustomize.py", "dayahead.pth"])
+def test_gate_fails_a_branch_that_adds_a_startup_hook(sb, path):
+    job_id = sb.to_build()
+    res = gate_after(sb, job_id, path=path, text="# x\n")
+    assert res.returncode == 1 and path in res.stdout
+
+
+@pytest.mark.parametrize("files, env", [
+    ({"sitecustomize.py": 'import os\n\nos.environ["PYTEST_PLUGINS"] = "evilplugin"\n'}, {}),
+    ({"usercustomize.py": 'import os\n\nos.environ["PYTEST_PLUGINS"] = "evilplugin"\n'}, {}),
+    ({"iniconfig.py": EXIT_0}, {}),
+    ({"pluggy.py": EXIT_0}, {}),
+    ({"json.py": EXIT_0}, {}),
+    ({"colorsys.py": EXIT_0}, {}),
+    ({"conftest.py": ALL_PASS}, {}),
+    ({"../conftest.py": ALL_PASS}, {}),
+    ({"../tests/conftest.py": ALL_PASS}, {}),
+    ({}, {"PYTEST_PLUGINS": "evilplugin"}),
+    ({}, {"PYTEST_ADDOPTS": "-p evilplugin"}),
+    ({}, {"PYTHONPATH": "{wt}", "PYTHONSTARTUP": "{wt}/evilplugin.py"}),
+], ids=["sitecustomize", "usercustomize", "iniconfig", "pluggy", "json", "colorsys", "conftest-in-worktree",
+        "conftest-above", "conftest-beside-tests", "PYTEST_PLUGINS", "PYTEST_ADDOPTS", "PYTHONPATH"])
+def test_nothing_in_the_worktree_or_environment_makes_a_failing_acceptance_test_pass(
+        tmp_path, monkeypatch, files, env):
+    """The runner itself, without the gate's guarded paths in front of it."""
+    import acceptance_tests
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "app.py").write_text("VALUE = 0\n")
+    (wt / "evilplugin.py").write_text(ALL_PASS)
+    for rel, text in files.items():
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text(text)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value.format(wt=wt))
+    (tmp_path / "tests").mkdir(exist_ok=True)
+    tests = tmp_path / "tests" / "acceptance.py"
+    tests.write_text(FAILING)
+    code, out, _ = acceptance_tests.run(wt, tests, 120)
+    assert code != 0, out
+    assert "1 failed" in out, out
+
+
+def test_the_acceptance_tests_still_import_the_branchs_own_packages(tmp_path):
+    import acceptance_tests
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "app.py").write_text("VALUE = 1\n")
+    tests = tmp_path / "acceptance.py"
+    tests.write_text(FAILING)
+    code, out, _ = acceptance_tests.run(wt, tests, 120)
+    assert code == 0 and "1 passed" in out, out
