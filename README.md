@@ -2,7 +2,8 @@
 
 A small, working demo of an AI software factory built on [Claude Code](https://claude.com/claude-code).
 A written request goes in, and a tested, reviewed code change comes out. Every
-step leaves a file you can read afterwards.
+step leaves a file you can read afterwards. It all runs on your own machine:
+no GitHub account, no pull requests, no server.
 
 The factory is [ZazenCodes' Software Factory v2](https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2),
 installed and tailored to a toy energy-trading app called **dayahead**, a
@@ -13,7 +14,8 @@ the factory doing real work, and to be a place to try it.
 or run `./fx deck`. It draws the factory as a control-room board. The camera
 moves around the board and a job travels the line as you press the arrow key.
 You can trip the gate, try illegal moves on the state machine and switch
-reviewers in and out. It is a single file and works offline.
+reviewers in and out. Press F or the Full screen button to present it. It is a
+single file and works offline.
 
 ## Quick start
 
@@ -26,7 +28,9 @@ cd factory-sandbox
 ./fx run      # sets the checkout up the first time, then Claude Code on /factory run
 ```
 
-On Windows PowerShell, use `.\fx.cmd` instead of `./fx`.
+On Windows PowerShell, use `.\fx.cmd` instead of `./fx`. Windows needs Git for
+Windows (for Git Bash) and a Python that answers to `python3`; the steps are in
+[docs/local-mode.md](docs/local-mode.md).
 
 Everything runs on your machine. Issues are Markdown files in
 `factory/issues/`, and `origin` is a repository on disk next to the checkout,
@@ -102,8 +106,8 @@ The design choices that carry the weight:
 What this does not give you: a sandbox. Agents and the gate run on your
 machine, with your credentials, and a shell can be talked into a lot. The
 guard stops mistakes and obvious detours, not a determined attack. Use
-`"auto_merge": false` until you trust it, protect the base branch, and run it
-in a container when issues come from people you don't know. This is a demo
+`"auto_merge": false` until you trust it, and run it in a container when
+issues come from people you don't know. This is a demo
 and a design to learn from, not something to point at a production repository
 as it is.
 
@@ -262,6 +266,12 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   `factory/tests/`.
 - `fx` wraps the common commands, and `./fx setup` makes a clone its own
   sandbox; `factory/local-setup.sh` makes an extra copy.
+- Windows (November 2026): the factory runs natively on Windows as well as on
+  Linux, macOS and in WSL. `factory/bin/portable.py` holds what differs
+  (starting scripts with Python, finding Git Bash rather than the WSL shortcut,
+  file locks, stopping process groups); `fx.cmd` runs `fx` from PowerShell and
+  cmd; the guard reads Windows paths. `.github/workflows/factory-tests.yml`
+  runs the checks and the factory's tests on Ubuntu and Windows.
 - `factory/dashboard.html`: reviewer chips show the model each reviewer runs
   on; cards show a merge commit, a quiet timer and an incomplete cost.
   A summary strip shows the factory as a whole: requests by outcome, estimated
