@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "bench"}
 GIT_ID = ["-c", "user.name=fx test", "-c", "user.email=fx@test.invalid"]
 
 
