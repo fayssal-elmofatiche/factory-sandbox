@@ -114,7 +114,8 @@ runs the branch's own tests, and test code can print whatever it likes: the
 gate catches a branch that fails honestly, and the reviewers read the diff
 for one that cheats. Use
 `"auto_merge": false` until you trust it, and run it in a container when
-issues come from people you don't know. This is a demo
+issues come from people you don't know: [docs/container.md](docs/container.md)
+has a recipe. This is a demo
 and a design to learn from, not something to point at a production repository
 as it is.
 
@@ -297,7 +298,7 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   for changes, time by station, and the run `./fx reset --keep` saved last.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
-- `docs/presentation.html` and `docs/local-mode.md` are new.
+- `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.
 
 ## Licence
 
