@@ -44,6 +44,11 @@ NAME = "acceptance.py"
 NOT_RUN = re.compile(r"\b(skipped|xfailed|xpassed|deselected)\b")
 
 
+def kept_path(job_id):
+    """Where `job merge` adds a job's acceptance tests to the permanent suite."""
+    return f"acceptance/test_{job_id.replace('-', '_')}.py"
+
+
 def problem(path):
     """Why the file can't serve as acceptance tests, or None."""
     if not path.exists():

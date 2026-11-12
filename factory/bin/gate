@@ -66,11 +66,6 @@ def matches(path, patterns):
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def kept_path(job_id):
-    """Where `job merge` adds a job's acceptance tests to the permanent suite."""
-    return f"acceptance/test_{job_id.replace('-', '_')}.py"
-
-
 def lf(data):
     return data.replace(b"\r\n", b"\n")
 
@@ -83,7 +78,7 @@ def protected_changes(worktree, job_id=None, tests=None):
     hits = []
     for line in diff.splitlines():
         status, *paths = line.split("\t")
-        if (tests and status[0] in "AM" and paths == [kept_path(job_id)]
+        if (tests and status[0] in "AM" and paths == [acceptance.kept_path(job_id)]
                 and lf(git_bytes(worktree, "show", f"HEAD:{paths[0]}")) == lf(tests.read_bytes())):
             continue
         if any(matches(p, CONFIG.get("guarded_paths", [])) for p in paths):

@@ -969,10 +969,26 @@ def run_acceptance_on_base(job):
              f"they don't test anything new. See factory/jobs/{job['id']}/acceptance-base.md")
 
 
+def lint_acceptance(job):
+    """ruff on acceptance.py as it will be linted once it is acceptance/test_<id>.py,
+    with the main checkout's settings. Refused now, while the spec writer can fix it:
+    at merge a lint error fails the gate and nobody may touch the file."""
+    ruff = shutil.which("ruff")
+    if not ruff:
+        warn(f"ruff isn't installed, so {acceptance.NAME} isn't linted; factory/checks.sh will fail without it")
+        return
+    config = ["--config", str(REPO / "pyproject.toml")] if (REPO / "pyproject.toml").exists() else []
+    res = subprocess.run([ruff, "check", *config, "--stdin-filename", acceptance.kept_path(job["id"]), "-"],
+                         cwd=REPO, input=(job_dir(job["id"]) / acceptance.NAME).read_bytes(), capture_output=True)
+    out = (res.stdout + res.stderr).decode(errors="replace").strip()
+    require(res.returncode == 0, f"`ruff check` fails on {acceptance.NAME}, which joins acceptance/ at merge "
+            f"and is linted there:\n\n{out}")
+
+
 def add_acceptance_to_suite(job):
     """Commit the job's acceptance tests to the permanent suite on its branch,
     once: a retried merge finds them there and commits nothing."""
-    rel = f"acceptance/test_{job['id'].replace('-', '_')}.py"
+    rel = acceptance.kept_path(job["id"])
     target = Path(job["worktree"]) / rel
     tests = (job_dir(job["id"]) / acceptance.NAME).read_bytes()
     if target.exists() and target.read_bytes() == tests:
@@ -1050,6 +1066,7 @@ def advance(job, stage, park=False, respec=False):
         if tests:
             problem = acceptance.problem(d / acceptance.NAME)
             require(not problem, problem)
+            lint_acceptance(job)
         seal(job, "spec.md", *([acceptance.NAME] if tests else []))
         next_round(job)
         if tests:

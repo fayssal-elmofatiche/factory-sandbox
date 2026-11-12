@@ -1378,3 +1378,18 @@ def test_the_acceptance_tests_still_import_the_branchs_own_packages(tmp_path):
     tests.write_text(FAILING)
     code, out, _ = acceptance_tests.run(wt, tests, 120)
     assert code == 0 and "1 passed" in out, out
+
+
+# ---- acceptance tests: lint, re-spec, the base run -----------------------------------
+
+
+def kept(job_id):
+    return f"acceptance/test_{job_id.replace('-', '_')}.py"
+
+
+def test_spec_to_build_refuses_acceptance_tests_ruff_rejects(sb):
+    job_id = sb.to_spec()
+    sb.spec(job_id, "import os\n" + PASSING)  # an unused import: F401
+    res = sb.job("advance", job_id, "build", check=False)
+    assert res.returncode == 1 and "F401" in res.stderr, res.stderr
+    assert sb.state(job_id)["stage"] == "spec"
