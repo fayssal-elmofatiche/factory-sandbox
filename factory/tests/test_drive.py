@@ -27,8 +27,10 @@ class Drive:
         self.dir = sb.repo.parent / "fake"
         self.dir.mkdir(exist_ok=True)
         (self.dir / "plan.json").write_text(json.dumps(plan))
+        # PYTHONUTF8=1: on Windows, portable.utf8() otherwise starts the driver again as a child of the
+        # process the test launched, and killing that process would leave the real driver running.
         self.env = {**ENV, "FACTORY_DRIVE_CLAUDE": str(FAKE), "FAKE_PLAN": str(self.dir / "plan.json"),
-                    "FACTORY_DRIVE_POLL": "0.05"}
+                    "FACTORY_DRIVE_POLL": "0.05", "PYTHONUTF8": "1"}
 
     def cmd(self, *args):
         return launch([self.sb.repo / "factory/bin/drive", *args])
@@ -184,6 +186,7 @@ def test_a_killed_driver_resumes_where_it_stopped(sb):
     assert drive.calls("builder"), "the builder never started"
     first.kill()  # no clean-up: SIGKILL on Unix, TerminateProcess on Windows
     first.wait()
+    assert json.loads((sb.repo / "factory/jobs/.drive/drive.json").read_text())["pid"] == first.pid
     job_id = only_job(sb)
     assert sb.state(job_id)["stage"] == "build"
     orphan = drive.calls("builder")[0]["pid"]
