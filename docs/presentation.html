@@ -621,7 +621,7 @@ const SLIDES = [
     html: (s) => s === 0 ? `<h2>The first job, as it ran</h2><div class="figs">
         <div><b data-n="63">63</b><span>lines added</span></div><div><b data-n="8">8</b><span>new tests</span></div><div><b data-n="1">1</b><span>reviewer</span></div>
         <div><b data-n="2">2</b><span>check runs</span></div><div><b data-n="1.11" data-pre="$">$1.11</b><span>AI usage cost</span></div></div>
-        <p class="dim small">On the event-registration app this repo started with.</p><p>Intake settled two open cases the way the existing code already behaved, and wrote down how to overrule it. The approver ran the tests again before merging.</p>`
+        <p class="dim small">On the toy app this repo started with, before the power auction.</p><p>Intake settled two open cases the way the existing code already behaved, and wrote down how to overrule it. The approver ran the tests again before merging.</p>`
       : `<h2>It also stalled once, and that was correct</h2><p class="big">The routing script had no price for a new model.</p>
         <p>It refused to continue until a price was added to <code>config.json</code>. No job runs on a model whose cost the factory cannot count.</p>`,
     board: (s) => { if (s === 0) runLine({ code: 'Haiku' }, 330); else { live(2); feeders({}, false); packet('route'); lampSet('intake', 'ok'); lampSet('route', 'trip') } } },
