@@ -32,6 +32,8 @@ def launch(cmd):
     if not portable.WINDOWS:
         return [str(c) for c in cmd]
     name = Path(str(cmd[0])).name
+    if name == "bash":  # a bare "bash" may be Windows' shortcut to WSL
+        return [portable.bash(), *map(str, cmd[1:])]
     if name.endswith(".sh"):
         return [portable.bash(), *map(str, cmd)]
     if name in SCRIPTS:
@@ -119,7 +121,7 @@ def test_unknown_command_and_missing_argument_exit_2():
 
 
 def test_output_cut_short_by_a_pipe_leaves_no_traceback():
-    res = run(["bash", "-c", f"{REPO / 'fx'} help | head -1"], cwd=REPO)
+    res = run(["bash", "-c", f"'{(REPO / 'fx').as_posix()}' help | head -1"], cwd=REPO)
     assert "Traceback" not in res.stderr and "BrokenPipe" not in res.stderr
 
 
