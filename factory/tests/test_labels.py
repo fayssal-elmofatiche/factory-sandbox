@@ -4,6 +4,7 @@ Run with `python3 -m pytest factory/tests -q`. Pure functions on the text of
 the job's files, so no sandbox is needed.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -85,3 +86,12 @@ def test_every_label_names_where_a_fix_would_go():
     for label in [*labels.REVIEW_LABELS, *labels.GATE_LABELS]:
         assert labels.fix_target(label).startswith((".claude/", "AGENTS.md", "factory/"))
     assert labels.fix_target("unlabelled").startswith(".claude/agents/reviewer-")
+
+
+def test_the_reviewer_prompts_offer_only_labels_retro_knows():
+    for prompt in sorted((ROOT / ".claude" / "agents").glob("reviewer-*.md")):
+        text = prompt.read_text()
+        assert "1. [<label>]" in text, prompt.name
+        offered = set(re.findall(r"`\[([a-z-]+)\]`", text))
+        unknown = offered - set(labels.REVIEW_LABELS)
+        assert offered and not unknown, (prompt.name, unknown)

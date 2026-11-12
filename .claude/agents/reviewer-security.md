@@ -70,7 +70,7 @@ VERDICT: PASS | CHANGES
 - 3 to 5 short bullets: what happened in this step and why
 
 ## Findings
-1. <path:line> <the problem, its impact, and the fix you want>
+1. [<label>] <path:line> <the problem, its impact, and the fix you want>
 
 ## Notes
 Non-blocking observations. Optional.
@@ -83,6 +83,11 @@ Non-blocking observations. Optional.
 - `## Summary` comes right after the header: 3 to 5 short bullets a human can
   skim on the dashboard. The detail goes in the sections below it.
 - Under Findings, write "None." when there are none.
+- Start every finding with one label in square brackets, so `fx retro` can
+  count why rounds go back across jobs: `[security]` for a security problem,
+  `[bug]` for one that is only a correctness bug, or
+  `[other]` when none fits. One label per finding; split a finding that
+  needs two.
 
 Write review-security.md with the Write tool before you reply: the file is your review, and the factory
 reads only the file. A verdict in your reply with no file on disk counts as no review. Then
