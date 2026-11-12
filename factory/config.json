@@ -4,6 +4,7 @@
   "base_branch": "main",
   "merge_method": "merge",
   "auto_merge": true,
+  "human_merge": { "risk": ["high"], "surfaces": [] },
   "max_cost_usd": null,
   "gate_timeout_seconds": 1800,
   "refuse_edits_after_label": true,

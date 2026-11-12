@@ -167,7 +167,8 @@ finished:
   closes the issue, ending in `merged`. If any of that fails it moves the job
   to `needs-human` and says why. The merge takes exactly the commit the gate
   and the reviewers saw; a commit added after review sends the job to
-  `needs-human`.
+  `needs-human`. A job whose risk or surfaces `human_merge` in `config.json`
+  lists also stops at `needs-human`: a person merges it with `./fx approve`.
 - `ESCALATE`: `factory/bin/job advance <id> needs-human`. It posts the
   decision on the issue and labels it `factory:needs-human`.
 
