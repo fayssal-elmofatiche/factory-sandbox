@@ -170,6 +170,8 @@ finished:
   and the reviewers saw; a commit added after review sends the job to
   `needs-human`. A job whose risk or surfaces `human_merge` in `config.json`
   lists also stops at `needs-human`: a person merges it with `./fx approve`.
+  So does a job the gate measured over a budget in `config.json` (`BUDGET:
+  OVER` in `checks.md`).
 - `ESCALATE`: `factory/bin/job advance <id> needs-human`. It posts the
   decision on the issue and labels it `factory:needs-human`.
 

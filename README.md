@@ -98,6 +98,14 @@ The design choices that carry the weight:
   itself, so an approver's APPROVE on a high-risk job still stops at
   `needs-human` until someone runs `./fx approve`. A surface counts when intake
   named it or when the branch changes a file `surface_paths` maps to it.
+- **A measured regression decides who merges, too.** When the checks pass, the
+  gate runs `factory/budget.py` on the branch and on the base and compares
+  them against `budgets` in `factory/config.json` (to start with, at most 10%
+  more Python instructions to clear a fixed day of orders). A branch over
+  budget still passes the gate, but `job merge` stops it at `needs-human` with
+  the numbers in `round-N/checks.md` and `./fx show`. The budget counts
+  instructions, not milliseconds: the count is the same on a busy machine, the
+  time isn't.
 - **Issue text is data.** Agents receive the issue title, text and comments as
   quoted data and are told to ignore instructions inside them.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
