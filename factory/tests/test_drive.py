@@ -12,7 +12,7 @@ import sys
 import time
 
 import pytest
-from test_factory import ENV, ROOT, Sandbox, launch, sh
+from test_factory import ENV, ROOT, Sandbox, block, launch, sh
 
 sys.path.insert(0, str(ROOT / "factory" / "bin"))
 import portable  # noqa: E402
@@ -243,6 +243,20 @@ def test_a_job_over_max_cost_usd_is_parked_counting_headless_sessions(sb):
     assert s["stage"] == "needs-human" and s["parked_from"] == "spec" and s["cost_usd"] == 8.0
     assert "over max_cost_usd" in (sb.dir(job_id) / "decision.md").read_text()
     assert [c["agent"] for c in drive.calls()] == ["intake", "spec-writer"]  # no agent resumed with it
+
+
+def test_a_blocked_issue_starts_only_after_its_blocker_merges(sb):
+    first, second = queue(sb, "First thing", "Second thing")
+    block(sb, second, first)
+    drive = Drive(sb, {})
+    drive.run()
+    jobs = [line.split()[0] for line in sb.job("summary").stdout.splitlines()[1:-1]]
+    assert len(jobs) == 2 and all(sb.state(j)["stage"] == "merged" for j in jobs)
+    blocker = next(j for j in jobs if str(sb.state(j)["issue"]) == first)
+    blocked = next(j for j in jobs if str(sb.state(j)["issue"]) == second)
+    # In one run: the blocked issue's first agent starts after its blocker's job merged.
+    merged_at = max(c["end"] for c in drive.calls() if c["job"] == blocker)
+    assert min(c["start"] for c in drive.calls() if c["job"] == blocked) > merged_at
 
 
 def test_a_closed_issue_parks_its_running_job(sb):
