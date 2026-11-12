@@ -72,6 +72,13 @@ rewrites files, such as `--fix`.
   `acceptance.py` real, rather than special-casing the values, names or inputs
   those tests use. A branch that passes them only for their exact inputs is
   CHANGES.
+- **Nothing that changes how tests run**: a `sitecustomize.py`,
+  `usercustomize.py` or `*.pth` file, or a module named like one from the
+  standard library or a test dependency (`json.py`, `iniconfig.py`, `pluggy/`)
+  that would stand in for it, is CHANGES. So is a `conftest.py` or pytest
+  setting anywhere, even outside the diff: check `git status --short
+  --ignored` in the worktree and look for a `conftest.py` in the main checkout
+  (`git -C <main checkout> status --short --ignored`) that no commit explains.
 - **Commits**: short one-line messages and nothing stray committed. Trailers
   and attribution (`Co-Authored-By` and the like) are the builder's, not
   yours: the builder runs on a different model than you, so never compare

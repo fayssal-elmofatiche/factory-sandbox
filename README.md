@@ -133,9 +133,10 @@ criteria (`test_ac<N>_...`), using only the public surface the spec names, the
 page or the public functions.
 
 - `factory/bin/job advance <job> build` refuses a spec without an
-  `acceptance.py` that compiles and has test functions. It seals the file with
-  the spec and runs it once on the base, into `acceptance-base.md`; tests that
-  already pass there only draw a warning.
+  `acceptance.py` that compiles, has test functions pytest collects and is
+  clean under `ruff check`. It seals the file with the spec and runs it once
+  on the base branch as it is on `origin`, into `acceptance-base.md`; tests that already pass there
+  only draw a warning.
 - The builder can read the tests but not edit them (the guard), and the gate
   refuses to run when the file differs from the sealed copy. The gate runs them
   after `checks.sh`, hermetically: a copy in a fresh temporary folder, an empty
@@ -144,16 +145,21 @@ page or the public functions.
   before anything in the worktree (see `factory/bin/acceptance_tests.py`).
   `checks.md` has an `## Acceptance tests` section. Skipped tests fail, as in
   `checks.sh`. The builder's Stop hook runs them too.
-- At merge, `factory/bin/job merge` commits them as
-  `acceptance/test_<job_id>.py`. `checks.sh` runs that folder with the rest of
+- At merge, `factory/bin/job merge` (and `./fx approve`) commits them as
+  `acceptance/test_<job_id>.py`, with `-` in the job id written as `_`. `checks.sh` runs that folder with the rest of
   the suite, and `acceptance/` is a guarded path, so every later job has to
   keep them passing and none may change them.
 - When a test contradicts the spec or can't be met, the builder writes
   `STATUS: BLOCKED` and names it. A person then sends the job back to the
   spec writer with `./fx feedback <job> --spec`, which keeps the old files as
-  `spec-<k>.md` and `acceptance-<k>.py`.
+  `spec-<k>.md` and `acceptance-<k>.py`, removes a copy a failed merge left in
+  `acceptance/` on the branch, and drops the earlier approval: nothing is
+  merged until a new round passes the gate.
 
-`"acceptance": false` in `factory/config.json` turns all of this off.
+`"acceptance": false` in `factory/config.json` stops the spec writer's tests
+being required, run by the gate or added at merge. What is already in
+`acceptance/` stays: `checks.sh` keeps running it with the rest of the suite,
+and the folder stays guarded.
 
 ## The `fx` command
 

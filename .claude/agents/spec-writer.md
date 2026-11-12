@@ -119,12 +119,14 @@ gate runs them on every build, and at merge they join the permanent suite in
   names. Never import a private name (one starting with `_`), never
   monkeypatch the app's internals, never read source files.
 - Self-contained: standard library and pytest only, no `conftest.py`, no
-  fixtures from the repo. The tests run from the worktree with an empty pytest
-  configuration, so the project's settings don't apply.
+  fixtures from the repo. The tests run from a copy of the file, with the
+  worktree as the working directory, an empty pytest configuration, no
+  `conftest.py` and no plugins, so the project's settings don't apply.
 - Import what the change adds inside the test function, not at the top: on the
   base it doesn't exist yet, and each test should fail on its own.
-- Keep it clean under `ruff check` with the project's rules: it is linted once
-  it joins `acceptance/`, and a lint failure then fails the merge.
+- Keep it clean under `ruff check` with the project's rules: the factory lints
+  it as `acceptance/test_<job_id>.py` when it accepts the spec and refuses it
+  on any finding, since it is linted again once it joins `acceptance/`.
 - Never skip a test or mark it as an expected failure: the gate fails both.
 
 The factory runs the file once on the base when it accepts the spec and records
@@ -160,6 +162,8 @@ def test_ac1_the_prices_page_shows_the_base_price():
                 break
             except OSError:
                 time.sleep(0.1)
+        else:
+            raise AssertionError(f"dayahead.web didn't answer on port {port} within 5 seconds")
         assert "Base price" in page
     finally:
         server.terminate()

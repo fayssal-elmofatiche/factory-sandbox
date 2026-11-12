@@ -1401,6 +1401,7 @@ def cmd_merge(job):
             return fail(f"Approved and gated, but `human_merge` in config.json says a person merges this job: "
                         f"{'; '.join(why)}. To merge it, run `./fx approve {job['id']}` "
                         f"(or `factory/bin/job approve {job['id']}`): the factory syncs with {BASE}, "
+                        f"adds the job's acceptance tests as {acceptance.kept_path(job['id'])}, "
                         f"runs the gate again and merges.", retry=False)
 
     for attempt in range(1, MERGE_ATTEMPTS + 1):
