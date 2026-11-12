@@ -128,19 +128,19 @@ class Sandbox:
         (self.dir(job_id) / "decision.md").write_text(f"{word}\n\n## Summary\n- ok\n")
 
     # -- shortcuts -----------------------------------------------------------
-    def to_build(self, **issue):
+    def to_build(self, risk="low", surfaces="none", **issue):
         ref = self.issue(**issue)
         job_id = self.job("create", ref).stdout.strip()
-        self.intake(job_id)
+        self.intake(job_id, risk=risk, surfaces=surfaces)
         self.route(job_id)
         self.job("advance", job_id, "spec")
         (self.dir(job_id) / "spec.md").write_text("# spec\n")
         self.job("advance", job_id, "build")
         return job_id
 
-    def to_review(self, **issue):
+    def to_review(self, path="dayahead/seed.py", **issue):
         job_id = self.to_build(**issue)
-        self.commit(job_id)
+        self.commit(job_id, path=path)
         self.built(job_id)
         self.job("advance", job_id, "gate")
         assert self.gate(job_id).returncode == 0
@@ -509,6 +509,59 @@ def test_auto_merge_off_leaves_the_merge_to_a_person(sb):
     sh(["git", "merge", "-q", "--no-ff", "-m", "by hand", f"factory/{job_id}"], sb.repo)
     sh(["git", "push", "-q", "origin", "main"], sb.repo)
     sb.job("queue")
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+def set_config(sb, **values):
+    config = sb.repo / "factory" / "config.json"
+    data = json.loads(config.read_text())
+    data.update(values)
+    config.write_text(json.dumps(data))
+
+
+def test_a_high_risk_job_waits_for_a_person_even_when_approved(sb):
+    job_id = sb.to_approved(risk="high")
+    sb.job("merge", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "needs-human" and not s["merge_failed"]
+    assert "# change" not in sb.base_file("dayahead/seed.py")
+    d = sb.dir(job_id)
+    decision = (d / "decision.md").read_text()
+    assert decision.startswith("ESCALATE") and "risk high" in decision and "human_merge" in decision
+    assert (d / s["approved_decision"]).read_text().startswith("APPROVE")
+    sb.job("approve", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "merged" and s["human_approved"] == "Op"
+    assert "# change" in sb.base_file("dayahead/seed.py")
+
+
+def test_a_low_risk_job_still_merges_on_its_own(sb):
+    job_id = sb.to_approved(risk="low")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+def test_a_surface_from_intake_can_require_a_person(sb):
+    set_config(sb, human_merge={"risk": [], "surfaces": ["security"]})
+    job_id = sb.to_approved(surfaces="security")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert "surface security" in (sb.dir(job_id) / "decision.md").read_text()
+
+
+def test_a_surface_the_diff_touches_can_require_a_person(sb):
+    set_config(sb, human_merge={"risk": [], "surfaces": ["security"]})
+    job_id = sb.to_approved(path="dayahead/web.py")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert "dayahead/web.py" in (sb.dir(job_id) / "decision.md").read_text()
+    assert "# change" not in sb.base_file("dayahead/web.py")
+
+
+def test_without_human_merge_a_high_risk_job_merges(sb):
+    set_config(sb, human_merge={})
+    job_id = sb.to_approved(risk="high")
+    sb.job("merge", job_id)
     assert sb.state(job_id)["stage"] == "merged"
 
 

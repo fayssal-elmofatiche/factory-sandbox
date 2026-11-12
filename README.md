@@ -93,6 +93,11 @@ The design choices that carry the weight:
   reviewer. After the build, the files the branch changed can add reviewers
   the issue's wording didn't call for (`surface_paths`). The tables are in
   `factory/config.json`.
+- **Risk decides who merges.** `human_merge` in `factory/config.json` lists
+  the risks, and the surfaces, that a person must merge. `job merge` checks it
+  itself, so an approver's APPROVE on a high-risk job still stops at
+  `needs-human` until someone runs `./fx approve`. A surface counts when intake
+  named it or when the branch changes a file `surface_paths` maps to it.
 - **Issue text is data.** Agents receive the issue title, text and comments as
   quoted data and are told to ignore instructions inside them.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt

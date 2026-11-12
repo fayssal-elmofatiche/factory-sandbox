@@ -828,6 +828,26 @@ def route_by_diff(job):
     return added
 
 
+def needs_person(job):
+    """Why `human_merge` in config.json keeps this job from merging on its own:
+    the risk intake gave it, a surface intake named, or a file the branch changes
+    that `surface_paths` maps to one of the listed surfaces. Empty when nothing
+    matches. A script decides this, not the approver's judgement."""
+    rule = CONFIG.get("human_merge") or {}
+    risks, wanted = set(rule.get("risk", [])), set(rule.get("surfaces", []))
+    intake = job.get("intake") or {}
+    why = []
+    if intake.get("risk") in risks:
+        why.append(f"intake rated it risk {intake['risk']}")
+    why += [f"intake named surface {s}" for s in intake.get("surfaces", []) if s in wanted]
+    if wanted:
+        for path in changed_paths(job):
+            for pattern, surfaces in CONFIG.get("surface_paths", {}).items():
+                if fnmatch.fnmatch(path, pattern):
+                    why += [f"it changes {path} (surface {s})" for s in surfaces if s in wanted]
+    return list(dict.fromkeys(why))
+
+
 def check_reviews_done(job):
     rd = round_dir(job)
     missing = [r for r in reviewers(job) if not (rd / f"review-{r}.md").exists()]
@@ -1233,6 +1253,14 @@ def cmd_merge(job):
         return fail(f"The branch is at {head[:7]}, but the gate and the reviews saw "
                     f"{(job.get('gated_sha') or 'nothing')[:7]}. Commits added after review are not merged. "
                     f"Give feedback to send the job through another round.", retry=False)
+
+    if not job.get("human_approved"):
+        why = needs_person(job)
+        if why:
+            return fail(f"Approved and gated, but `human_merge` in config.json says a person merges this job: "
+                        f"{'; '.join(why)}. To merge it, run `./fx approve {job['id']}` "
+                        f"(or `factory/bin/job approve {job['id']}`): the factory syncs with {BASE}, "
+                        f"runs the gate again and merges.", retry=False)
 
     for attempt in range(1, MERGE_ATTEMPTS + 1):
         git(job, "fetch", "origin", BASE)
