@@ -19,13 +19,18 @@ jobs:
         shell: bash  # Git Bash on Windows, as the factory uses it
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # local-setup.sh pushes HEAD into a new origin; git refuses that from a shallow clone
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: python3 on Windows
         if: runner.os == 'Windows'
-        # checks.sh and the agents' hooks call python3; setup-python only installs python.exe.
-        run: cp "$(command -v python)" "$(dirname "$(command -v python)")/python3.exe"
+        # checks.sh and the agents' hooks call python3; some runner images have only python.exe.
+        run: |
+          dir="$(dirname "$(command -v python)")"
+          [ -e "$dir/python3.exe" ] || cp "$dir/python.exe" "$dir/python3.exe"
+          python3 --version
       - run: python3 -m pip install pytest ruff
       - run: git config --global user.name ci && git config --global user.email ci@example.com
       - name: The project's checks
