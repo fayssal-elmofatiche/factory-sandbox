@@ -212,7 +212,7 @@ const ring = (id, x, y, r = 118) => `<circle class="ring" id="ring-${id}" cx="${
 const tag = (i, x, y, name) => `<g class="tag" id="tag-${i}"><line x1="${x}" y1="${y + 52}" x2="${x}" y2="${y + 84}"/><rect x="${x - 122}" y="${y}" width="244" height="52" rx="5"/><text x="${x}" y="${y + 34}">${name}</text></g>`
 
 const ERAS = [['1968', 'THE IDEA'], ['1969', 'FACTORIES'], ['2004', 'REUSE'], ['2010s', 'CI/CD'], ['NOW', 'AGENTS']]
-const ALARMS = ['ISSUE UNCLEAR', 'OUT OF SCOPE', 'BUILDER BLOCKED', 'ROUNDS USED UP', 'APPROVER ESCALATES', 'MERGE NOT CLEAN']
+const ALARMS = ['ISSUE UNCLEAR', 'OUT OF SCOPE', 'BUILDER BLOCKED', 'ROUNDS OR COST', 'PERSON MUST SEE', 'MERGE NOT CLEAN']
 const petals = [[-135, 'WRITES'], [-45, 'TESTS'], [45, 'REVIEWS'], [135, 'APPROVES']].map(([a, t]) => {
   const p = (deg, r) => [2000 + r * Math.cos(deg * Math.PI / 180), 400 + r * Math.sin(deg * Math.PI / 180)].map(Math.round)
   const [tx, ty] = p(a, 322)
@@ -410,8 +410,8 @@ const HISTORY = [
   ['Now', 'Agents do the work in between', 'Pipelines automated the deterministic steps. Agents now do the unstructured work between them, including writing the code. The basic loop is a trigger, an agent, a proposed change and a merge.', ''],
 ]
 const ORCH = [
-  ['You start it once', 'You type <code>/factory run</code> in Claude Code, or <code>./fx run</code> opens it for you. That session reads the playbook and the list of waiting requests, and from then on it runs every job. It is the foreman of the line.'],
-  ['It starts one agent per station', 'Each agent is a fresh AI session with its own written instructions. It is given the job\'s folder and working copy, does its one task, writes its file and ends. Agents run in the background, several jobs at a time.'],
+  ['You start it once', 'You type <code>/factory run</code> in Claude Code, or <code>./fx run</code> opens it for you. That session reads the playbook and the list of waiting requests, and from then on it runs every job. It is the foreman of the line. <code>./fx drive</code> lets a script take the same steps instead, with no session to watch.'],
+  ['It starts one agent per station', 'Each agent is a fresh AI session with its own written instructions. It is given the job\'s folder and working copy, does its one task, writes its file and ends. Agents run in the background, one job at a time unless you raise <code>concurrency</code>.'],
   ['After every agent, it calls a script', 'The script reads the file the agent wrote and moves the job to the next station, or refuses. The orchestrator asks, and the script decides.'],
   ['It does none of the work itself', 'Its playbook forbids it to write code, specs, reviews or decisions, or to change a job\'s record. Its whole task is to start the next agent and call the next script. When a job needs a person, it stops and tells you.'],
 ]
@@ -526,8 +526,8 @@ const ALARM_TEXT = [
   ['The issue is unclear', 'Intake posts its question on the issue and waits. Write your answer under the question in the issue file, and the next run resumes the job.'],
   ['The request does not belong', 'Intake rejects it and says why. Nothing is built.'],
   ['The builder is blocked', 'It writes down what it needs and stops.'],
-  ['Three rounds were not enough', 'Build, gate and review may repeat three times. After the third round a person decides.'],
-  ['The approver escalates', 'Each project lists what a person must always see. Here: anything that shows or exports who bid or offered what.'],
+  ['Three rounds, or the money, ran out', 'Build, gate and review may repeat three times. After the third round a person decides. A job that has cost more than <code>max_cost_usd</code> ($5 here) stops too.'],
+  ['The approver escalates', 'Each project lists what a person must always see. Here: anything that shows or exports who bid or offered what. <code>config.json</code> can also leave a merge to a person: every high-risk job, and any change that makes the auction slower than its budget allows.'],
   ['The merge is not clean', 'A conflict, or checks that fail after syncing with main, stops at a person.'],
 ]
 const TRACKERS = {
@@ -563,8 +563,8 @@ const SLIDES = [
     board: () => runLine({ code: 'Haiku' }) },
 
   { name: 'The orchestrator', side: 'bottom', frame: [2610, 1010, 4950], steps: 4,
-    html: (s) => `<div class="doc"><div><h2>One session runs the whole line: the orchestrator</h2>
-      <p class="dim">Stations do the work. The orchestrator is what moves a job from one station to the next. It is an AI session too, but it only coordinates.</p></div>
+    html: (s) => `<div class="doc"><div><h2>One coordinator runs the whole line: the orchestrator</h2>
+      <p class="dim">Stations do the work. The orchestrator is what moves a job from one station to the next. It is an AI session you watch, or a script, and either way it only coordinates.</p></div>
       <div><p class="kicker">Step ${s + 1} of 4</p><p class="big">${ORCH[s][0]}</p><p>${ORCH[s][1]}</p></div></div>`,
     board: (s) => { cl('orch', 'hide', false); cl('cmd-you', 'on', true); feeders(FULL, false)
       if (s >= 1) $$('.cmd-a').forEach((c) => c.classList.add('on'))
@@ -603,7 +603,8 @@ const SLIDES = [
         : g.weak ? ['warn', 'Passed. The gate cannot catch this', 'A script cannot tell an honest test change from a weakened one, so the code reviewer is told to look for it.']
         : ['ok', 'Passed', 'The checks pass and no protected file changed. Reviewers start.']
       return `<h2>New code cannot change the checks it is judged by</h2><p>The gate takes the checks from the main version, so the builder cannot switch them off.</p><p class="field">Try it. The builder</p>
-      ${keys('gate', [['fail', 'breaks a test'], ['checks', 'edits checks.sh'], ['weak', 'weakens a test']], (v) => g[v])}<div class="readout ${c}"><b>${t}</b>${d}</div>` },
+      ${keys('gate', [['fail', 'breaks a test'], ['checks', 'edits checks.sh'], ['weak', 'weakens a test']], (v) => g[v])}<div class="readout ${c}"><b>${t}</b>${d}</div>
+      <p class="dim small" style="margin-top:.8em">When the checks pass, the gate also measures how much work clearing the auction takes. A change that makes it more than 10% slower still passes, but a person merges it.</p>` },
     board: () => { const g = state.gate, trip = g.checks || g.fail
       live(trip ? 5 : 6); feeders({ code: 'Haiku' }, !trip); lampSet('build', 'ok'); packet(trip ? 'build' : 'review')
       cl('blade-gate', 'open', trip); lampSet('gate', trip ? 'trip' : 'ok'); cl('ret-gate', 'hot', trip); lampSet('code', !trip && g.weak ? 'warn' : '') } },
@@ -638,7 +639,8 @@ const SLIDES = [
     html: () => { const T = TRACKERS[state.tracker]
       return `<h2>Everything runs on your machine</h2><p class="field">Issues come from</p>${keys('tracker', [['yours'], ['files'], ['kata']], (v) => v === state.tracker)}
       <p class="big">${T[0]}</p><p>${T[1]} You need ${T[2]}.</p><p class="dim small">Another tracker, such as GitLab, would connect at this same point.</p>
-      <p class="dim small">The factory merges the branch into main itself once the gate has passed again, in a repository on disk next to your checkout. Git refuses the push if main moved in the meantime.</p>` },
+      <p class="dim small">The factory merges the branch into main itself once the gate has passed again, in a repository on disk next to your checkout. Git refuses the push if main moved in the meantime.</p>
+      <p class="dim small">Agents run with your files and logins. To wall them off, run the factory in a container (<code>docs/container.md</code>).</p>` },
     board: () => { cl('sources', 'hide', false); live(1); $('#srcblade').style.transform = `rotate(${TRACKERS[state.tracker][3]}deg)` } },
 
   { name: 'The commands', side: 'wide', frame: [2760, 1130, 5600],
@@ -649,16 +651,22 @@ const SLIDES = [
         ${row('./fx up', 'starts the dashboard and opens it')}
         <p class="field" style="margin-top:1em">When a job waits for you</p>
         ${row('./fx show 1', 'the decision, the change and what you can do')}
-        ${row('./fx approve 1', 'or <code>feedback 1</code> or <code>reject 1</code>, followed by your words')}</div>
+        ${row('./fx approve 1', 'or <code>feedback 1</code> or <code>reject 1</code>, followed by your words')}
+        ${row('./fx answer 1', 'answers the question intake asked')}</div>
       <div><p class="field">Run</p>
-        ${row('./fx queue 2', 'queues request 2 for the next run')}
+        ${row('./fx new "Title"', 'files a request and queues it; <code>./fx queue 2</code> queues one that exists')}
         ${row('./fx run', 'opens Claude Code and types <code>/factory run</code>')}
+        ${row('./fx drive', 'the same run, taken by a script, with no session to watch')}
         ${row('./fx status', 'shows the jobs and what runs next')}
         ${row('./fx watch', 'shows the files as the stations write them')}</div>
-      <div><p class="field">Experiment</p>
+      <div><p class="field">Learn and experiment</p>
         ${row('./fx config review.low sonnet', 'changes one setting')}
+        ${row('./fx retro', 'which kinds of failure keep coming back, and what to change')}
+        ${row('./fx bench plan 1 --try builder=sonnet', 'replays a job with another model and compares')}
+        ${row('./fx sweep security', 'an agent reads main for one kind of work and files issues')}
+        ${row('./fx demo', 'replays a saved run on the dashboard, at no cost')}
         ${row('./fx reset', 'discards the work, keeps your setup, starts again')}
-        <p class="dim small" style="margin-top:1em"><code>./fx &lt;command&gt; --help</code> explains each one. The factory still runs in a Claude Code session that you watch; <code>fx</code> only opens it.</p></div>
+        <p class="dim small" style="margin-top:1em"><code>./fx &lt;command&gt; --help</code> explains each one.</p></div>
       </div>` },
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
 
