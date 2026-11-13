@@ -49,6 +49,12 @@ def git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
+ACCEPTANCE = ('from pathlib import Path\n\nimport dayahead.seed\n\n\n'
+              'def test_ac1_the_builder_changed_the_seed():\n'
+              '    """AC1: dayahead/seed.py carries the fake change."""\n'
+              '    assert "fake change" in Path(dayahead.seed.__file__).read_text()\n')
+
+
 def write(agent, folder, job, round_n):
     if agent == "intake":
         (folder / "intake.md").write_text(
@@ -56,6 +62,9 @@ def write(agent, folder, job, round_n):
             "RESCOPED: no\n\n## Summary\n- fake intake\n\n## Scope\nscope\n")
     elif agent == "spec-writer":
         (folder / "spec.md").write_text("# Spec\n\nfake spec\n")
+        # With acceptance on (the default), the spec writer also writes black-box tests. These fail
+        # on main and pass once the fake builder has changed dayahead/seed.py.
+        (folder / "acceptance.py").write_text(ACCEPTANCE)
     elif agent == "builder":
         wt = Path(job["worktree"])
         with open(wt / "dayahead" / "seed.py", "a") as f:
