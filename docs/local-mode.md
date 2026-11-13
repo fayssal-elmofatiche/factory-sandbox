@@ -125,7 +125,16 @@ The factory appends its comments below the body, each between a
 `<!-- comment by <name> at <time> -->` line and a `<!-- /comment -->` line, and
 sets `state: closed` when the job merges. To answer a question the factory
 asked, type your reply at the end of the file, below the last
-`<!-- /comment -->`, or use `./fx answer <job>`. A file the factory can't
+`<!-- /comment -->`, or use `./fx answer <job>`.
+
+An issue that must wait for others names them in its header, for example
+`blocked_by: 3, 4`. Until every one of them is closed, `job queue` shows the
+issue as `wait` with what blocks it, gives it no slot, and `job create` refuses
+it. An issue closes when its job merges, so the blocked one starts on the next
+run after that. A number that has no issue file keeps it waiting too. The
+kata tracker has no `blocked_by` and never holds an issue.
+
+A file the factory can't
 read is skipped with a warning; other files in the folder are ignored. You can
 write issue files by hand or use the commands:
 

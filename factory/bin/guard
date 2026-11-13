@@ -2,13 +2,14 @@
 """PreToolUse hook for the factory's agents: keep each one inside its job.
 
 Usage (from an agent's frontmatter): guard <role>
-  role is intake, spec-writer, builder, reviewer or approver.
+  role is intake, spec-writer, builder, reviewer, approver or sweeper.
 
 Reads the hook event on stdin and exits 2, with the reason on stderr, when the
 call is outside what the role may do:
 
   Write, Edit   only the role's own file in factory/jobs/<job>/, plus, for the
-                builder, files inside .worktrees/
+                builder, files inside .worktrees/. The sweeper writes only its findings,
+                factory/sweeps/<kind>.json: `job propose` files them
   Bash          no factory/bin/job or route (the orchestrator moves state),
                 no GitHub CLI, no push to the base branch or forced push, no writing into
                 factory/jobs/ through the shell, and for every role except
@@ -39,6 +40,7 @@ OWN_FILE = {
     "builder": r"factory/jobs/[^/]+/build\.md",
     "reviewer": r"factory/jobs/[^/]+/round-\d+/review-[a-z]+\.md",
     "approver": r"factory/jobs/[^/]+/decision\.md",
+    "sweeper": r"factory/sweeps/(perf|security|cleanup|docs)\.json",
 }
 
 # `git`, then any options that come before the subcommand: git -C <dir> push, git -c k=v commit.

@@ -29,6 +29,8 @@ Usage:
   job summary [<job>...]         table of jobs: issue, stage, round, cost, time
   job answer <job>               post the author's answer (stdin) on the job's issue
   job new-issue <title>          file a new `factory` issue with the body on stdin; prints its ref
+  job new-issue --no-queue <title>  the same, without the label: it waits for a person to queue it
+  job propose <kind>             file a sweep's findings (JSON on stdin) as unlabelled issues, capped, no duplicates
   job issues                     list every issue: ref, state, labels, title
   job label <issue> <label>      add a label to an issue (`factory` queues it)
   job unlabel <issue> <label>    remove a label from an issue
@@ -48,6 +50,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import labels as failure_labels
 import portable
 
 if __name__ == "__main__":
@@ -142,6 +145,7 @@ def kata_json(*args):
 #                 labels[{name}], comments[{author{login}, body, createdAt}]}
 #   queued()     open issues carrying the queue label, oldest first: [{number, title}]
 #   rows()       every issue: (ref, state, [labels], title)
+#   blockers(ref) the issues it waits for that are not closed: [(ref, why)]
 #   comment, label, close, create, whoami, edited_after_label
 # To add one (GitLab, Jira, ...), write a class with these methods and name it
 # in TRACKERS.
@@ -153,6 +157,7 @@ def kata_json(*args):
 #   title: Show the day's base and peak price on the prices page
 #   state: open
 #   labels: factory
+#   blocked_by: 3, 4          (optional: issues that must close first)
 #   author: ada
 #   created: 2026-11-12T09:00:00Z
 #   ---
@@ -219,14 +224,18 @@ class FilesTracker:
             "state": (meta.get("state") or "open").lower(), "author": author,
             "created": meta.get("created") or "",
             "labels": [x.strip() for x in meta.get("labels", "").split(",") if x.strip()],
+            "blocked_by": [x.strip().lstrip("#") for x in meta.get("blocked_by", "").split(",") if x.strip()],
             "body": rest[:heads[0].start()].strip() if heads else rest.strip(), "comments": comments,
         }
 
     def write(self, issue):
         title = " ".join(str(issue["title"]).split())
         lines = ["---", f"title: {title}", f"state: {issue['state']}",
-                 f"labels: {', '.join(issue['labels'])}", f"author: {issue['author']}",
-                 f"created: {issue['created']}", "---", "", defuse(issue["body"]), ""]
+                 f"labels: {', '.join(issue['labels'])}"]
+        if issue.get("blocked_by"):
+            lines.append(f"blocked_by: {', '.join(issue['blocked_by'])}")
+        lines += [f"author: {issue['author']}", f"created: {issue['created']}", "---", "",
+                  defuse(issue["body"]), ""]
         for c in issue["comments"]:
             lines += [f"<!-- comment by {c['author']} at {c['created']} -->", defuse(c["body"]), COMMENT_END, ""]
         ISSUES.mkdir(parents=True, exist_ok=True)
@@ -287,16 +296,30 @@ class FilesTracker:
         issue["state"] = "closed"
         self.write(issue)
 
-    def create(self, title, body):
+    def create(self, title, body, queue=True):
         ISSUES.mkdir(parents=True, exist_ok=True)
         taken = [int(p.stem) for p in ISSUES.glob("*.md") if p.stem.isascii() and p.stem.isdigit()]
         ref = max(taken, default=0) + 1
-        self.write({"number": ref, "title": title, "state": "open", "labels": [LABELS["queue"]],
+        self.write({"number": ref, "title": title, "state": "open", "labels": [LABELS["queue"]] if queue else [],
                     "author": operator(), "created": now(), "body": body, "comments": []})
         return ref
 
     def edited_after_label(self, ref):
         return False  # the file belongs to the person running the factory
+
+    def blockers(self, ref):
+        """The issues in this one's `blocked_by` that are not closed yet, each
+        with why: [(ref, "open")] or [(ref, "doesn't exist")]."""
+        out = []
+        for b in self.read(ref)["blocked_by"]:
+            try:
+                state = self.read(b)["state"]
+            except Refused:
+                out.append((b, "doesn't exist"))
+                continue
+            if state != "closed":
+                out.append((b, state))
+        return out
 
 
 class KataTracker:
@@ -339,13 +362,17 @@ class KataTracker:
     def close(self, ref, note, sha):
         kata("close", str(ref), "--done", "--commit", sha, "--message", note)
 
-    def create(self, title, body):
+    def create(self, title, body, queue=True):
         ref = kata_json("create", title, "--body", body)["issue"]["short_id"]
-        kata("label", "add", ref, LABELS["queue"])
+        if queue:
+            kata("label", "add", ref, LABELS["queue"])
         return ref
 
     def edited_after_label(self, ref):
         return False
+
+    def blockers(self, ref):
+        return []  # blocked_by is a files-tracker header; kata issues are never held
 
 
 # ---- Hosts: where code is merged -------------------------------------------
@@ -777,6 +804,10 @@ def sync(job):
                 line = first_line(rd / f"review-{r}.md")
                 m = re.fullmatch(r"VERDICT:\s*(PASS|CHANGES)", line or "")
                 job["reviews"][r] = m.group(1) if m else ("pending" if line is None else "invalid")
+    # Why rounds went back, counted from every round's files: see factory/bin/labels.py.
+    job["failures"] = {}
+    for failure in failure_labels.job_failures(d):
+        job["failures"][failure["label"]] = job["failures"].get(failure["label"], 0) + 1
     cost, unpriced = cost_usd(job)
     # Claude Code prunes old transcripts; a finished job keeps the cost it had.
     job["cost_usd"] = max(cost, job.get("cost_usd") or 0.0) if job["stage"] in TERMINAL else cost
@@ -826,6 +857,49 @@ def route_by_diff(job):
     if added:
         job["agents"]["added_by_diff"] = {**job["agents"].get("added_by_diff", {}), **added}
     return added
+
+
+def over_budget(job, name="checks.md"):
+    """Why the performance budget keeps this job from merging on its own: the
+    gate wrote BUDGET: OVER or UNMEASURED into round-N/<name>, with the numbers
+    from factory/budget.py. Empty when the branch is within budget."""
+    path = round_dir(job) / name
+    if not path.exists():
+        return []
+    status = header(path).get("BUDGET", "")
+    if status not in {"OVER", "UNMEASURED"}:
+        return []
+    body = section(path, "Budget") or ""
+    rows = [[c.strip() for c in line.strip("|").split("|")] for line in body.splitlines()
+            if line.startswith("|") and line.rstrip().endswith("| OVER |")]
+    numbers = ", ".join(f"{r[0]} {r[1]} -> {r[2]} ({r[3]}, limit {r[4]})" for r in rows)
+    if status == "OVER":
+        return [f"factory/budget.py measured a regression over budget: {numbers} "
+                f"(round-{job['round']}/{name})"]
+    first = body.splitlines()[0] if body else ""
+    return [f"factory/budget.py could not measure the branch: {first.partition('(')[2].rstrip(')') or 'see ' + name}"]
+
+
+def needs_person(job):
+    """Why this job may not merge on its own: `human_merge` in config.json (the
+    risk intake gave it, a surface intake named, or a file the branch changes
+    that `surface_paths` maps to one of the listed surfaces), or a performance
+    budget the gate measured it over (over_budget()). Empty when nothing
+    matches. A script decides this, not the approver's judgement."""
+    rule = CONFIG.get("human_merge") or {}
+    risks, wanted = set(rule.get("risk", [])), set(rule.get("surfaces", []))
+    intake = job.get("intake") or {}
+    why = []
+    if intake.get("risk") in risks:
+        why.append(f"intake rated it risk {intake['risk']}")
+    why += [f"intake named surface {s}" for s in intake.get("surfaces", []) if s in wanted]
+    if wanted:
+        for path in changed_paths(job):
+            for pattern, surfaces in CONFIG.get("surface_paths", {}).items():
+                if fnmatch.fnmatch(path, pattern):
+                    why += [f"it changes {path} (surface {s})" for s in surfaces if s in wanted]
+    why += over_budget(job)
+    return list(dict.fromkeys(why))
 
 
 def check_reviews_done(job):
@@ -1103,10 +1177,18 @@ def slugify(title):
     return "-".join(words) or "issue"
 
 
+def blocked_note(ref):
+    """'blocked by #2 (open), #7 (doesn't exist)', or '' when nothing blocks it."""
+    held = TRACKER.blockers(ref)
+    return "blocked by " + ", ".join(f"#{b} ({why})" for b, why in held) if held else ""
+
+
 def cmd_create(number):
     existing = [j for j in all_jobs() if str(j["issue"]) == str(number)]
     if existing:
         die(f"issue #{number} already has job {existing[0]['id']} ({existing[0]['stage']})")
+    if note := blocked_note(number):
+        die(f"issue #{number} is {note}; it starts once those issues are closed")
     require_slot(None)
     issue = TRACKER.get(number)
     if issue["state"] != "OPEN":
@@ -1150,7 +1232,10 @@ def cmd_queue():
         n = issue["number"]
         j = jobs.get(n)
         if not j:
-            new_rows.append(("new", n, "-", "-", issue["title"]))
+            if note := blocked_note(n):
+                other_rows.append(("wait", n, "-", "-", note))
+            else:
+                new_rows.append(("new", n, "-", "-", issue["title"]))
         elif j["stage"] == "needs-info":
             if replied_since_question(TRACKER.get(n)):
                 replied_rows.append(("resume", n, j["id"], j["stage"], "author replied"))
@@ -1235,6 +1320,14 @@ def cmd_merge(job):
                     f"{(job.get('gated_sha') or 'nothing')[:7]}. Commits added after review are not merged. "
                     f"Give feedback to send the job through another round.", retry=False)
 
+    if not job.get("human_approved"):
+        why = needs_person(job)
+        if why:
+            return fail(f"Approved and gated, but config.json (`human_merge`, `budgets`) says a person merges this job: "
+                        f"{'; '.join(why)}. To merge it, run `./fx approve {job['id']}` "
+                        f"(or `factory/bin/job approve {job['id']}`): the factory syncs with {BASE}, "
+                        f"runs the gate again and merges.", retry=False)
+
     for attempt in range(1, MERGE_ATTEMPTS + 1):
         git(job, "fetch", "origin", BASE)
         merged = git(job, "merge", "--no-edit", f"origin/{BASE}", check=False)
@@ -1247,6 +1340,10 @@ def cmd_merge(job):
         if gate.returncode != 0:
             return fail(f"The gate failed after syncing with {BASE}. "
                         f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}", retry=False)
+        over = [] if job.get("human_approved") else over_budget(job, "merge-checks.md")
+        if over:
+            return fail(f"Synced with {BASE} and gated, but the budget now holds it for a person: "
+                        f"{'; '.join(over)}. To merge it, run `./fx approve {job['id']}`.", retry=False)
         try:
             git(job, "push", "origin", job["branch"])
             if not CONFIG.get("auto_merge", True) and not job.get("human_approved"):
@@ -1324,13 +1421,22 @@ def cmd_show(job):
     print(f"{job['id']}  issue #{job['issue']}  {job['title']}")
     print(f"stage {job['stage']}, round {job['round']}, cost ${job['cost_usd']:.2f}"
           + (f", {HOST.where(job)}" if HOST.where(job) else ""))
-    for name in ("intake.md", "decision.md"):
+    shown = ("Summary", "Why", "For the human", "Questions")
+    # build.md's Risk and impact is the builder's claim, shown for the person to
+    # weigh; nothing reads it to route or merge, which keep intake's RISK.
+    for name, parts in (("intake.md", shown), ("build.md", ("Summary", "Risk and impact")),
+                        ("decision.md", shown)):
         if (d / name).exists():
             print(f"\n{name}: {first_line(d / name)}")
-            for part in ("Summary", "Why", "For the human", "Questions"):
+            for part in parts:
                 text = section(d / name, part)
                 if text:
                     print(f"  {part}:\n" + "\n".join("    " + line for line in text.splitlines()))
+    for name in ("merge-checks.md", "checks.md"):
+        budget = section(round_dir(job) / name, "Budget") if job["round"] and (round_dir(job) / name).exists() else None
+        if budget:
+            print(f"\nbudget (round-{job['round']}/{name}):\n" + "\n".join("  " + line for line in budget.splitlines()))
+            break
     if job["round"] and run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{job['branch']}"],
                             check=False).returncode == 0:
         run(["git", "fetch", "origin", BASE], check=False)
@@ -1365,10 +1471,66 @@ def cmd_answer(job, text):
     print(f"{job['id']}: answer posted on issue #{job['issue']}")
 
 
-def cmd_new_issue(title, body):
+def cmd_new_issue(title, body, queue=True):
     if not body.strip():
         die("no issue body on stdin")
-    print(TRACKER.create(" ".join(title.split()), body.strip()))
+    print(TRACKER.create(" ".join(title.split()), body.strip(), queue=queue))
+
+
+# ---- Sweeps: findings a person decides on ----------------------------------
+#
+# A sweep reads the base branch and proposes work. Its agent writes findings to
+# a file and nothing else; this command files them. Each becomes an issue
+# WITHOUT the queue label, so nothing a sweep finds runs until a person queues
+# it (`./fx queue <n>`). Intake, routing and human_merge then apply as for any
+# issue: a sweep can't make its own finding low risk by calling it so.
+
+SWEEP_KINDS = ("perf", "security", "cleanup", "docs")
+FINDING_FIELDS = ("title", "file", "evidence", "scope")
+
+
+def same_title(title):
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", title.lower()).split())
+
+
+def finding_body(kind, f, commit):
+    seen = f" at `{commit[:12]}`" if commit else ""
+    return (f"Found by the `{kind}` sweep on `{BASE}`{seen}. A sweep only proposes: this issue does not run "
+            f"until a person queues it with `./fx queue <ref>`.\n\n"
+            f"**File:** `{f['file']}`\n\n## Evidence\n\n{f['evidence']}\n\n## Suggested scope\n\n{f['scope']}")
+
+
+def cmd_propose(kind, text):
+    """File at most sweep.max_issues findings, unlabelled, skipping any whose
+    title matches an open issue or an earlier finding in the same run."""
+    require(kind in SWEEP_KINDS, f"unknown sweep kind {kind!r}: one of {', '.join(SWEEP_KINDS)}")
+    try:
+        findings = json.loads(text)
+    except ValueError as e:
+        raise Refused(f"the findings are not JSON: {e}") from None
+    require(isinstance(findings, list), "the findings are a JSON list of objects")
+    for n, f in enumerate(findings, 1):
+        require(isinstance(f, dict) and all(isinstance(f.get(k), str) and f[k].strip() for k in FINDING_FIELDS),
+                f"finding {n} needs non-empty strings for {', '.join(FINDING_FIELDS)}")
+    cap = int((CONFIG.get("sweep") or {}).get("max_issues", 3))
+    taken = {same_title(title): ref for ref, state, _, title in TRACKER.rows() if state.lower() == "open"}
+    commit = run(["git", "rev-parse", f"origin/{BASE}"], check=False).stdout.strip()
+    filed = 0
+    for f in findings:
+        title = " ".join(f["title"].split())
+        key = same_title(title)
+        if key in taken:
+            print(f"skip\tduplicate of {taken[key]}\t{title}")
+            continue
+        if filed >= cap:
+            print(f"skip\tover the cap of {cap} per run\t{title}")
+            continue
+        clean = {k: SECRETS.sub("[redacted]", f[k].strip()) for k in FINDING_FIELDS}
+        ref = TRACKER.create(title, finding_body(kind, clean, commit), queue=False)
+        taken[key] = ref
+        filed += 1
+        print(f"filed\t{ref}\t{title}")
+    print(f"{filed} filed, unlabelled. Queue one with ./fx queue <ref>.")
 
 
 def cmd_issues():
@@ -1411,7 +1573,7 @@ def cmd_summary(args):
 
 
 READ_ONLY = {"summary", "issues", "show"}
-TAKES_STDIN = {"feedback", "reject", "park", "answer", "new-issue"}
+TAKES_STDIN = {"feedback", "reject", "park", "answer", "new-issue", "propose"}
 
 
 def main(argv):
@@ -1456,6 +1618,10 @@ def main(argv):
             cmd_answer(resolve(args[0]), text)
         elif cmd == "new-issue" and len(args) == 1:
             cmd_new_issue(args[0], text)
+        elif cmd == "new-issue" and len(args) == 2 and args[0] == "--no-queue":
+            cmd_new_issue(args[1], text, queue=False)
+        elif cmd == "propose" and len(args) == 1:
+            cmd_propose(args[0], text)
         elif cmd == "agents" and len(args) == 2:
             cmd_agents(sync(resolve(args[0])), args[1])
         elif cmd == "sync" and len(args) == 1:

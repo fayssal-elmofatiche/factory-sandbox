@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "bench"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
@@ -129,19 +129,19 @@ class Sandbox:
         (self.dir(job_id) / "decision.md").write_text(f"{word}\n\n## Summary\n- ok\n")
 
     # -- shortcuts -----------------------------------------------------------
-    def to_build(self, **issue):
+    def to_build(self, risk="low", surfaces="none", **issue):
         ref = self.issue(**issue)
         job_id = self.job("create", ref).stdout.strip()
-        self.intake(job_id)
+        self.intake(job_id, risk=risk, surfaces=surfaces)
         self.route(job_id)
         self.job("advance", job_id, "spec")
         (self.dir(job_id) / "spec.md").write_text("# spec\n")
         self.job("advance", job_id, "build")
         return job_id
 
-    def to_review(self, **issue):
+    def to_review(self, path="dayahead/seed.py", **issue):
         job_id = self.to_build(**issue)
-        self.commit(job_id)
+        self.commit(job_id, path=path)
         self.built(job_id)
         self.job("advance", job_id, "gate")
         assert self.gate(job_id).returncode == 0
@@ -513,6 +513,130 @@ def test_auto_merge_off_leaves_the_merge_to_a_person(sb):
     assert sb.state(job_id)["stage"] == "merged"
 
 
+def set_config(sb, **values):
+    config = sb.repo / "factory" / "config.json"
+    data = json.loads(config.read_text())
+    data.update(values)
+    config.write_text(json.dumps(data))
+
+
+def test_a_high_risk_job_waits_for_a_person_even_when_approved(sb):
+    job_id = sb.to_approved(risk="high")
+    sb.job("merge", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "needs-human" and not s["merge_failed"]
+    assert "# change" not in sb.base_file("dayahead/seed.py")
+    d = sb.dir(job_id)
+    decision = (d / "decision.md").read_text()
+    assert decision.startswith("ESCALATE") and "risk high" in decision and "human_merge" in decision
+    assert (d / s["approved_decision"]).read_text().startswith("APPROVE")
+    sb.job("approve", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "merged" and s["human_approved"] == "Op"
+    assert "# change" in sb.base_file("dayahead/seed.py")
+
+
+def test_a_low_risk_job_still_merges_on_its_own(sb):
+    job_id = sb.to_approved(risk="low")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+def test_a_surface_from_intake_can_require_a_person(sb):
+    set_config(sb, human_merge={"risk": [], "surfaces": ["security"]})
+    job_id = sb.to_approved(surfaces="security")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert "surface security" in (sb.dir(job_id) / "decision.md").read_text()
+
+
+def test_a_surface_the_diff_touches_can_require_a_person(sb):
+    set_config(sb, human_merge={"risk": [], "surfaces": ["security"]})
+    job_id = sb.to_approved(path="dayahead/web.py")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert "dayahead/web.py" in (sb.dir(job_id) / "decision.md").read_text()
+    assert "# change" not in sb.base_file("dayahead/web.py")
+
+
+def test_without_human_merge_a_high_risk_job_merges(sb):
+    set_config(sb, human_merge={})
+    job_id = sb.to_approved(risk="high")
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+# ---- The performance budget --------------------------------------------------
+
+# Appended to dayahead/orderbook.py: every hour's clearing sorts its prices 50 more times.
+SLOW_CLEARING = """
+
+_clear = OrderBook.clear
+
+
+def _slow_clear(self, hour):
+    for _ in range(50):
+        sorted(o.price for o in self.orders(hour))
+    return _clear(self, hour)
+
+
+OrderBook.clear = _slow_clear
+"""
+
+
+def approved_change(sb, path, text):
+    job_id = sb.to_build()
+    assert gate_after(sb, job_id, path=path, text=text).returncode == 0
+    sb.job("advance", job_id, "review")
+    sb.review(job_id)
+    sb.job("advance", job_id, "approve")
+    sb.decide(job_id)
+    return job_id
+
+
+def test_a_branch_over_budget_passes_the_gate_but_waits_for_a_person(sb):
+    job_id = approved_change(sb, "dayahead/orderbook.py", SLOW_CLEARING)
+    checks = (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    assert checks.startswith("GATE: PASS") and "BUDGET: OVER" in checks
+    assert "| clearing_ops |" in checks and "| OVER |" in checks
+    sb.job("merge", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "needs-human" and not s["merge_failed"]
+    assert "_slow_clear" not in sb.base_file("dayahead/orderbook.py")
+    decision = (sb.dir(job_id) / "decision.md").read_text()
+    assert decision.startswith("ESCALATE") and "over budget: clearing_ops" in decision
+    out = sb.job("show", job_id).stdout
+    assert "budget (round-1/checks.md)" in out and "clearing_ops" in out and "OVER" in out
+    sb.job("approve", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+    assert "_slow_clear" in sb.base_file("dayahead/orderbook.py")
+
+
+def test_a_branch_within_budget_merges_on_its_own(sb):
+    job_id = approved_change(sb, "dayahead/orderbook.py", "\n# Cleared by merit order.\n")
+    checks = (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    assert "BUDGET: WITHIN" in checks and "| clearing_ops |" in checks and "+0.0%" in checks
+    assert "| clearing_ops | 0 |" not in checks  # a tracer that counts nothing must not pass
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+def test_a_budget_the_script_cannot_measure_waits_for_a_person(sb):
+    set_config(sb, budgets={"clearing_furlongs": {"max_regression_pct": 10}})
+    job_id = sb.to_approved()
+    assert "BUDGET: UNMEASURED" in (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert "clearing_furlongs" in (sb.dir(job_id) / "decision.md").read_text()
+
+
+def test_gate_fails_a_change_to_the_budget_script(sb):
+    job_id = sb.to_build()
+    res = gate_after(sb, job_id, path="factory/budget.py", text="\nRUNS = 0\n")
+    assert res.returncode == 1
+    assert "factory/budget.py" in (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+
+
 def escalated(sb):
     job_id = sb.to_review()
     sb.review(job_id)
@@ -721,6 +845,53 @@ def test_issues_filed_at_once_are_all_kept(sb):
     assert len(sb.job("issues").stdout.splitlines()) == 4
 
 
+def block(sb, ref, *blockers):
+    path = sb.repo / "factory" / "issues" / f"{ref}.md"
+    text = path.read_text()
+    path.write_text(text.replace("\nstate:", f"\nblocked_by: {', '.join(blockers)}\nstate:", 1))
+
+
+def test_a_blocked_issue_waits_until_its_blocker_merges(sb):
+    first = sb.to_approved(title="First thing")
+    second = sb.issue(title="Second thing")
+    block(sb, second, "1")
+    row = [r for r in sb.job("queue").stdout.splitlines() if r.split("\t")[1] == second][0]
+    assert row.startswith("wait\t") and "blocked by #1" in row
+    res = sb.job("create", second, check=False)
+    assert res.returncode == 1 and "blocked by #1" in res.stderr
+    sb.job("merge", first)
+    assert sb.job("queue").stdout.startswith(f"new\t{second}\t")
+    sb.job("create", second)
+
+
+def test_a_blocked_issue_does_not_take_a_slot(sb):
+    config = sb.repo / "factory" / "config.json"
+    config.write_text(json.dumps({**json.loads(config.read_text()), "concurrency": 2}))
+    sb.job("create", sb.issue(title="First thing"))
+    blocked = sb.issue(title="Second thing")
+    block(sb, blocked, "1")
+    free = sb.issue(title="Third thing")
+    rows = sb.job("queue").stdout.splitlines()
+    assert any(r.startswith(f"new\t{free}\t") for r in rows)
+    assert any(r.startswith(f"wait\t{blocked}\t") for r in rows)
+
+
+def test_a_blocker_that_does_not_exist_keeps_the_issue_waiting(sb):
+    ref = sb.issue()
+    block(sb, ref, "7")
+    out = sb.job("queue").stdout
+    assert out.startswith(f"wait\t{ref}\t") and "#7 (doesn't exist)" in out
+
+
+def test_blocked_by_survives_the_factory_writing_the_issue(sb):
+    ref = sb.issue()
+    block(sb, ref, "2", "3")
+    sb.job("label", ref, "extra")
+    sb.job("unlabel", ref, "extra")
+    assert "blocked_by: 2, 3\n" in (sb.repo / "factory" / "issues" / f"{ref}.md").read_text()
+    assert "blocked by #2 (doesn't exist), #3 (doesn't exist)" in sb.job("queue").stdout
+
+
 def test_odd_refs_are_refused(sb):
     sb.issue()
     for ref in ("abc", "0001", "../1"):
@@ -736,6 +907,19 @@ def test_show_prints_the_decision_and_what_to_do(sb):
     out = sb.job("show", job_id).stdout
     assert "decision.md: ESCALATE" in out and "looks off" in out
     assert f"./fx feedback {job_id}" in out and "dayahead/seed.py" in out
+
+
+def test_show_prints_the_builders_summary_and_risk(sb):
+    job_id = sb.to_review()
+    (sb.dir(job_id) / "build.md").write_text(
+        "STATUS: READY\n\n# Build: x\n\n## Summary\n- adds a seed row\n\n"
+        "## Changes\nnot shown\n\n"
+        "## Risk and impact\n- intake said low; still low\n- no interface changes\n\n"
+        "## Log\nnot shown either\n")
+    out = sb.job("show", job_id).stdout
+    assert "build.md: STATUS: READY" in out
+    assert "    - adds a seed row" in out and "    - intake said low; still low" in out
+    assert "Risk and impact:" in out and "not shown" not in out
 
 
 def test_local_setup_makes_a_working_sandbox(tmp_path):
@@ -861,3 +1045,140 @@ def test_a_job_folder_never_exists_without_its_job_json(sb):
     source = (sb.repo / "factory" / "bin" / "job").read_text(encoding="utf-8")
     body = source.split("def cmd_create(", 1)[1].split("\ndef ", 1)[0]
     assert body.index("save(job)") < body.index("write_issue_md(job)")
+
+
+# ---- failure labels: why rounds went back --------------------------------------
+
+
+
+def retro(sb, *args, check=True):
+    return sh([str(sb.repo / "factory/bin/retro"), *args], sb.repo, check=check)
+
+
+def test_sync_counts_the_labels_of_every_round(sb):
+    job_id = sb.to_build()
+    assert gate_after(sb, job_id, path="dayahead/lint_me.py", text="import os\n").returncode == 1
+    sb.job("advance", job_id, "build")
+    sh(["git", "rm", "-q", "dayahead/lint_me.py"], sb.wt(job_id))
+    sb.commit(job_id, path="dayahead/seed.py")
+    sb.built(job_id)
+    sb.job("advance", job_id, "gate")
+    assert sb.gate(job_id).returncode == 0
+    sb.job("advance", job_id, "review")
+    (sb.dir(job_id) / "round-2" / "review-code.md").write_text(
+        "VERDICT: CHANGES\n\n## Summary\n- x\n\n## Findings\n"
+        "1. [redundant-test] tests/test_a.py:3 repeats test_b\n2. dayahead/seed.py:1 untagged\n")
+    sb.job("advance", job_id, "build")
+    assert sb.state(job_id)["failures"] == {"gate:lint": 1, "redundant-test": 1, "unlabelled": 1}
+
+
+def test_a_job_with_no_failures_has_empty_counts(sb):
+    job_id = sb.to_approved()
+    assert sb.state(job_id)["failures"] == {}
+
+
+def test_retro_counts_labels_across_jobs_and_proposes_a_fix_past_the_threshold(sb):
+    for _ in range(2):
+        job_id = sb.to_review()
+        (sb.dir(job_id) / "round-1" / "review-code.md").write_text(
+            "VERDICT: CHANGES\n\n## Findings\n1. [missing-test] a.py:1 x\n2. [missing-test] b.py:2 y\n")
+        sb.job("advance", job_id, "build")
+    out = retro(sb, "--threshold", "3").stdout
+    assert "missing-test" in out and "4" in out
+    assert "Propose" in out and ".claude/agents/builder.md" in out
+    quiet = retro(sb, "--threshold", "5").stdout
+    assert "missing-test" in quiet and "Propose" not in quiet
+    data = json.loads(retro(sb, "--json").stdout)
+    assert data["labels"]["missing-test"]["count"] == 4
+    assert len(data["labels"]["missing-test"]["where"]) == 4
+
+
+def test_retro_with_no_jobs_says_so(sb):
+    out = retro(sb).stdout
+    assert "No failures" in out
+
+
+# ---- sweeps: findings a person decides on ------------------------------------
+
+
+def finding(title, file="dayahead/web.py:10", evidence="It does a thing slowly.", scope="Do it once."):
+    return {"title": title, "file": file, "evidence": evidence, "scope": scope}
+
+
+def propose(sb, kind, findings, check=True):
+    """The sweeper agent, stubbed: its findings file, handed to `job propose`."""
+    return sb.job("propose", kind, stdin=json.dumps(findings), check=check)
+
+
+def labels_of(sb, ref):
+    return [r.split("\t")[2] for r in sb.job("issues").stdout.splitlines() if r.split("\t")[0] == ref][0]
+
+
+def test_new_issue_still_queues_and_no_queue_does_not(sb):
+    queued = sb.issue(title="Queued thing")
+    waiting = sb.job("new-issue", "--no-queue", "Waiting thing", stdin="Body.").stdout.strip()
+    assert labels_of(sb, queued) == "factory"
+    assert labels_of(sb, waiting) == "-"
+    rows = sb.job("queue").stdout
+    assert f"\t{queued}\t" in rows and f"\t{waiting}\t" not in rows
+
+
+def test_a_sweep_files_unlabelled_issues_that_run_only_once_queued(sb):
+    out = propose(sb, "perf", [finding("Cache the merit order per hour")]).stdout
+    ref = out.splitlines()[0].split("\t")[1]
+    assert out.startswith(f"filed\t{ref}\tCache the merit order per hour")
+    assert labels_of(sb, ref) == "-"
+    body = (sb.repo / "factory" / "issues" / f"{ref}.md").read_text()
+    assert "`perf` sweep" in body and "dayahead/web.py:10" in body
+    assert "## Evidence" in body and "## Suggested scope" in body
+    assert f"\t{ref}\t" not in sb.job("queue").stdout
+    res = sb.job("create", ref, check=False)
+    assert res.returncode == 1
+    sb.job("label", ref, "factory")
+    assert sb.job("queue").stdout.startswith(f"new\t{ref}\t")
+    sb.job("create", ref)
+
+
+def test_a_sweep_files_no_more_than_the_cap(sb):
+    config = sb.repo / "factory" / "config.json"
+    config.write_text(json.dumps({**json.loads(config.read_text()), "sweep": {"max_issues": 2}}))
+    out = propose(sb, "cleanup", [finding(f"Remove dead helper {n}") for n in range(5)]).stdout
+    assert [r.split("\t")[0] for r in out.splitlines()[:5]] == ["filed", "filed", "skip", "skip", "skip"]
+    assert "over the cap of 2" in out
+    assert len(sb.job("issues").stdout.splitlines()) == 2
+
+
+def test_a_sweep_skips_findings_that_match_an_open_issue(sb):
+    open_ref = sb.issue(title="Escape the zone name on the prices page")
+    out = propose(sb, "security", [finding("escape the zone name on the prices page."),
+                                   finding("Bind the dev server to localhost only"),
+                                   finding("Bind the dev server to localhost only")]).stdout.splitlines()
+    assert out[0] == f"skip\tduplicate of {open_ref}\tescape the zone name on the prices page."
+    assert out[1].startswith("filed\t")
+    assert out[2].startswith(f"skip\tduplicate of {out[1].split(chr(9))[1]}\t")
+    # Run again: everything it found is open now, so nothing new is filed.
+    again = propose(sb, "security", [finding("Bind the dev server to localhost only")]).stdout
+    assert again.startswith("skip\tduplicate of") and "0 filed" in again
+    assert len(sb.job("issues").stdout.splitlines()) == 2
+
+
+def test_a_sweep_refuses_bad_findings_and_files_nothing(sb):
+    assert propose(sb, "speed", [finding("A thing")], check=False).returncode == 1
+    assert sb.job("propose", "docs", stdin="not json", check=False).returncode == 1
+    res = propose(sb, "docs", [finding("A thing"), {"title": "No evidence"}], check=False)
+    assert res.returncode == 1 and "finding 2" in res.stderr
+    assert sb.job("issues").stdout == ""
+
+
+def test_guard_lets_the_sweeper_write_only_its_findings(sb):
+    def guard(tool, **tool_input):
+        event = json.dumps({"tool_name": tool, "tool_input": tool_input, "cwd": str(sb.repo)})
+        guard_script = str(sb.repo / "factory/bin/guard")
+        return sh([guard_script, "sweeper"], sb.repo, check=False, stdin=event).returncode
+    sweeps = sb.repo / "factory" / "sweeps"
+    assert guard("Write", file_path=str(sweeps / "perf.json")) == 0
+    assert guard("Write", file_path=str(sweeps / "other.json")) == 2
+    assert guard("Write", file_path=str(sb.repo / "factory" / "issues" / "9.md")) == 2
+    assert guard("Edit", file_path=str(sb.repo / "dayahead" / "web.py")) == 2
+    assert guard("Bash", command="factory/bin/job label 3 factory") == 2
+    assert guard("Bash", command="factory/bin/job propose perf < factory/sweeps/perf.json") == 2

@@ -298,12 +298,12 @@ def cmd_deck():
     return 0
 
 
-def cmd_run(args):
+def cmd_run(args, prompt=None):
     if not shutil.which("claude"):
         die("Claude Code is not installed; run ./fx doctor")
     if not is_set_up():
         cmd_setup(quiet=True)
-    prompt = "/factory run" + (f" {args[0]}" if args else "")
+    prompt = prompt or "/factory run" + (f" {args[0]}" if args else "")
     print(f"Starting Claude Code in {REPO} with: {prompt}")
     os.chdir(REPO)
     if portable.WINDOWS:  # Windows has no exec: run Claude Code and pass its exit code on
@@ -900,7 +900,7 @@ CONFIG_KEYS = {
     "max_rounds": "how often build, gate and review may repeat before a person decides (1 or more)",
     "merge_method": "merge, squash or rebase",
     "auto_merge": "on: the factory merges what the approver approves; off: every merge waits for you",
-    "max_cost_usd": "a job that has cost more than this stops and waits for you; off for no limit",
+    "max_cost_usd": "a job stops between steps once it costs more than this, in dollars; off for no cap",
     "review.low": "model of the code reviewer for low-risk changes: haiku, sonnet, opus",
     "review.medium": "the same for medium risk",
     "review.high": "the same for high risk",
@@ -915,7 +915,7 @@ def cmd_config(args):
             print(f"  {key:<14} {cfg[key]}")
         print(f"  {'auto_merge':<14} {'on' if cfg.get('auto_merge', True) else 'off'}")
         cap = cfg.get("max_cost_usd")
-        print(f"  {'max_cost_usd':<14} {f'{cap:g} per job' if cap else 'off'}")
+        print(f"  max_cost_usd   {f'${cap:.2f} per job' if cap else 'off'}")
         for risk, reviewers in cfg["routing"].items():
             print(f"  review.{risk:<7} " + ", ".join(f"{k} on {v}" for k, v in reviewers.items()))
         for surface, reviewers in cfg["surface_reviewers"].items():
@@ -946,16 +946,17 @@ def cmd_config(args):
         new = re.sub(r'("auto_merge":\s*)(true|false)', rf"\g<1>{json.dumps(cfg[key])}", text, count=1)
         value = json.dumps(cfg[key])
     elif key == "max_cost_usd":
-        try:
-            cfg[key] = None if value == "off" else float(value)
-        except ValueError:
-            cfg[key] = -1
-        if cfg[key] is not None and not cfg[key] > 0:
-            die("max_cost_usd must be a number above 0, or off")
-        if cfg[key] is not None and cfg[key] == int(cfg[key]):
-            cfg[key] = int(cfg[key])
-        new = re.sub(r'("max_cost_usd":\s*)(null|[\d.]+)', rf"\g<1>{json.dumps(cfg[key])}", text, count=1)
-        value = json.dumps(cfg[key])
+        if value == "off":
+            cap = None
+        else:
+            try:
+                cap = float(value)
+            except ValueError:
+                cap = 0.0
+            if not cap > 0 or cap == float("inf"):
+                die("max_cost_usd must be a dollar amount above 0, or off")
+        new = re.sub(r'("max_cost_usd":\s*)[^,\n}]+', rf"\g<1>{json.dumps(cap)}", text, count=1)
+        cfg[key] = cap
     else:
         risk = key.split(".", 1)[1]
         if value not in MODELS:
@@ -1038,6 +1039,12 @@ COMMANDS = [
     ("run", "open Claude Code on /factory run",
      "Opens Claude Code in this folder and types `/factory run`, or `/factory run <issue>`\n"
      "for one issue. From there the session is yours to watch and approve."),
+    ("sweep", "open Claude Code on /factory sweep: propose work as unlabelled issues",
+     "Opens Claude Code in this folder and types `/factory sweep <kind>`. The sweep reads\n"
+     "the base branch for perf, security, cleanup or docs work and files at most\n"
+     "sweep.max_issues findings (config.json) as issues WITHOUT the factory label,\n"
+     "skipping any that match an open issue. Nothing it files runs until you queue it\n"
+     "with `fx queue <issue>`. It writes no code."),
     ("issues", "list the issues: ref, state, labels, title", None),
     ("new", "file a new issue and queue it",
      "Files an issue with the title you give and queues it. Write the request after the\n"
@@ -1046,6 +1053,18 @@ COMMANDS = [
     ("unqueue", "remove that label from an issue", None),
     ("status", "show the jobs and what the next run would do", None),
     ("watch", "show job files as they are written (Ctrl-C to stop)", None),
+    ("retro", "count why rounds went back, and propose where a fix would go",
+     "Counts the labels on every failed gate and every CHANGES review across the jobs:\n"
+     "lint, a failing test, a spec gap, a redundant test and so on. A label seen often\n"
+     "enough gets a proposal: the agent prompt or file a fix would most likely change.\n"
+     "A person makes that change; the factory can't edit its own setup. Read-only."),
+    ("bench", "replay past jobs on other models and compare: plan, report, list, clean",
+     "Sets up replays of jobs the factory already did, from the same starting commit and\n"
+     "the same sealed spec, with another model at one or more stations, and compares them\n"
+     "with the original: gate passes, rounds, approvals, cost, why rounds went back.\n"
+     "  fx bench plan <job>... --try builder=sonnet [--try builder=haiku] [--max-usd 5]\n"
+     "  fx bench report <bench>\n"
+     "`fx bench run` is not built yet: it needs the deterministic driver loop."),
     ("show", "a waiting job: the decision, the change, your options", None),
     ("answer", "answer the question a job asked, so it can go on",
      "For a job that waits in `needs-info`: your words are posted on the issue as the\n"
@@ -1094,6 +1113,8 @@ def build_parser():
     made["demo"].add_argument("--step", action="store_true", help="wait for Enter before each step")
     made["demo"].add_argument("--no-open", action="store_true", help="don't open a browser")
     made["run"].add_argument("issue", nargs="?", help="run only this issue")
+    made["sweep"].add_argument("kind", choices=["perf", "security", "cleanup", "docs"],
+                               help="perf, security, cleanup or docs")
     made["queue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     made["unqueue"].add_argument("issue", help="the issue's ref, as `fx issues` shows it")
     made["new"].add_argument("title", help="a short imperative title, in quotes")
@@ -1104,6 +1125,10 @@ def build_parser():
                        ("park", "why it is stopped")):
         made[name].add_argument("words", nargs="*", help=f"{what}; left out, it comes from stdin or your editor")
     made["approve"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    made["retro"].add_argument("--threshold", type=int, default=3, help="propose a fix from this many (default 3)")
+    made["retro"].add_argument("--all", action="store_true", help="also count runs saved by `fx reset --keep`")
+    made["retro"].add_argument("--json", action="store_true", help="machine-readable output")
+    made["bench"].add_argument("args", nargs=argparse.REMAINDER, help="plan, run, report, list or clean, and theirs")
     made["config"].add_argument("key", nargs="?", choices=sorted(CONFIG_KEYS), metavar="key",
                                 help="one of: " + ", ".join(sorted(CONFIG_KEYS)))
     made["config"].add_argument("value", nargs="?", help="the new value")
@@ -1131,6 +1156,8 @@ def dispatch(ns):
         return cmd_demo(ns)
     if cmd == "run":
         return cmd_run([ns.issue] if ns.issue else [])
+    if cmd == "sweep":
+        return cmd_run([], prompt=f"/factory sweep {ns.kind}")
     if cmd == "issues":
         return job("issues")
     if cmd in {"queue", "unqueue"}:
@@ -1141,6 +1168,11 @@ def dispatch(ns):
         return cmd_watch()
     if cmd == "show":
         return job("show", ns.job)
+    if cmd == "bench":
+        return subprocess.run(portable.script(FACTORY / "bin" / "bench", *ns.args), cwd=REPO).returncode
+    if cmd == "retro":
+        args = ["--threshold", ns.threshold] + (["--all"] if ns.all else []) + (["--json"] if ns.json else [])
+        return subprocess.run(portable.script(FACTORY / "bin" / "retro", *args), cwd=REPO).returncode
     if cmd == "approve":
         return cmd_approve([ns.job] + (["--yes"] if ns.yes else []))
     if cmd == "retry":

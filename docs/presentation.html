@@ -513,7 +513,7 @@ const MOVES = {
   'gate>needs-human': 'the gate failed in the last allowed round.', 'review>approve': 'every routed reviewer has written a review, and all say PASS.',
   'review>build': 'a review says CHANGES and rounds remain.', 'review>needs-human': 'a review says CHANGES in the last allowed round.',
   'approve>merging': 'decision.md starts with APPROVE.', 'approve>needs-human': 'decision.md starts with ESCALATE.',
-  'merging>merged': 'the branch synced with main, the gate passed again and the merge went through.', 'merging>needs-human': 'the branch conflicts with main, or the gate fails after the sync.',
+  'merging>merged': 'the branch synced with main, the gate passed again and the merge went through.', 'merging>needs-human': 'the job is high risk (human_merge in config.json), the branch conflicts with main, or the gate fails after the sync.',
   'needs-human>build': 'a person sent it back with feedback.', 'needs-human>rejected': 'a person rejects it, with a reason.',
   'needs-human>merging': 'a person approved it (./fx approve), or retries a merge that failed (./fx retry). The gate runs again first.',
   'needs-human>intake': 'a person gave feedback on a job that was parked during intake.', 'needs-human>spec': 'a person gave feedback on a job that was parked while its spec was written.',
@@ -611,7 +611,7 @@ const SLIDES = [
       const n = 1 + (state.surf.has('ui') ? 2 : 0) + (sec ? 1 : 0)
       return `<h2>Risk decides who reviews</h2><p class="field">Intake rated the risk</p>${keys('risk', [['low'], ['medium'], ['high']], (v) => v === state.risk)}
       <p class="field">The change touches</p>${keys('surf', [['ui', 'the interface'], ['security', 'security or personal data']], (v) => state.surf.has(v))}
-      <div class="readout ok"><b>${n} reviewer${n > 1 ? 's' : ''}${n > 1 ? ', in parallel' : ''}</b>${n === 1 ? (state.risk === 'low' ? 'A low-risk change gets one reviewer on the cheapest model.' : 'A medium-risk change still gets one reviewer, on a stronger model.') : (state.risk === 'high' && !state.surf.has('security') ? 'High risk always adds the security reviewer. ' : '') + 'The job waits for all of them. A table in config.json decides who runs.'}</div>
+      <div class="readout ok"><b>${n} reviewer${n > 1 ? 's' : ''}${n > 1 ? ', in parallel' : ''}</b>${n === 1 ? (state.risk === 'low' ? 'A low-risk change gets one reviewer on the cheapest model.' : 'A medium-risk change still gets one reviewer, on a stronger model.') : (state.risk === 'high' ? (state.surf.has('security') ? '' : 'High risk always adds the security reviewer. ') + 'And a person merges it, whatever the approver says. ' : '') + 'The job waits for all of them. A table in config.json decides who runs.'}</div>
       <p class="dim small" style="margin-top:.8em">Haiku is the smallest and cheapest Claude model, Sonnet is mid-sized and Opus is the largest.</p>` },
     board: () => { const set = { code: state.risk === 'low' ? 'Haiku' : 'Sonnet' }
       if (state.surf.has('ui')) { set.ux = 'Sonnet'; set.ui = 'Haiku' }

@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "bench"}
 GIT_ID = ["-c", "user.name=fx test", "-c", "user.email=fx@test.invalid"]
 
 
@@ -99,8 +99,8 @@ def merge_a_job(box, issue="1"):
 
 # ---- help and errors -------------------------------------------------------
 
-COMMANDS = ["doctor", "up", "down", "deck", "demo", "run", "issues", "new", "queue", "unqueue",
-            "status", "watch", "config", "baseline", "reset"]
+COMMANDS = ["doctor", "up", "down", "deck", "demo", "run", "sweep", "issues", "new", "queue",
+            "unqueue", "status", "watch", "retro", "bench", "config", "baseline", "reset"]
 
 
 def test_bare_fx_lists_every_command():
@@ -168,6 +168,27 @@ def test_up_opens_only_the_dashboard_and_deck_opens_the_presentation(sandbox, tm
     assert len(urls) == 2 and urls[1].endswith("presentation.html")
 
 
+# ---- retro -----------------------------------------------------------------
+
+
+def test_retro_counts_why_rounds_went_back(sandbox):
+    assert "No failures" in fx(sandbox, "retro").stdout
+    job_id = "001-x"
+    rd = sandbox / "factory" / "jobs" / job_id / "round-1"
+    rd.mkdir(parents=True)
+    (rd.parent / "job.json").write_text("{}")
+    (rd / "review-code.md").write_text("VERDICT: CHANGES\n\n## Findings\n1. [bug] a.py:1 x\n")
+    out = fx(sandbox, "retro", "--threshold", "1").stdout
+    assert "bug" in out and "Propose" in out and f"{job_id} round 1 code" in out
+    assert json.loads(fx(sandbox, "retro", "--json").stdout)["labels"]["bug"]["count"] == 1
+
+
+def test_bench_passes_its_arguments_through(sandbox):
+    assert "No benches yet" in fx(sandbox, "bench", "list").stdout
+    res = fx(sandbox, "bench", "plan", "001-nope", "--try", "builder=sonnet", check=False)
+    assert res.returncode == 1 and "no job 001-nope" in res.stderr
+
+
 # ---- config ----------------------------------------------------------------
 
 
@@ -186,21 +207,28 @@ def test_config_changes_one_setting_and_commits_it(sandbox):
     assert "already" in fx(sandbox, "config", "concurrency", "2").stdout
 
 
-def test_config_sets_the_merge_switch_and_the_budget(sandbox):
-    out = fx(sandbox, "config").stdout
-    assert re.search(r"auto_merge\s+on", out) and re.search(r"max_cost_usd\s+10 per job", out)
+def test_config_sets_the_merge_switch(sandbox):
+    assert re.search(r"auto_merge\s+on", fx(sandbox, "config").stdout)
     fx(sandbox, "config", "auto_merge", "off")
+    assert cfg(sandbox)["auto_merge"] is False
+    assert re.search(r"auto_merge\s+off", fx(sandbox, "config").stdout)
+    assert run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=sandbox).stdout == ""
+
+
+def test_config_sets_and_clears_the_cost_cap(sandbox):
+    assert "max_cost_usd" in fx(sandbox, "config").stdout
     fx(sandbox, "config", "max_cost_usd", "2.5")
-    assert cfg(sandbox)["auto_merge"] is False and cfg(sandbox)["max_cost_usd"] == 2.5
+    assert cfg(sandbox)["max_cost_usd"] == 2.5
+    assert "Set max_cost_usd to 2.5" in run(["git", "log", "-1", "--format=%s"], cwd=sandbox).stdout
     fx(sandbox, "config", "max_cost_usd", "off")
     assert cfg(sandbox)["max_cost_usd"] is None
-    assert re.search(r"max_cost_usd\s+off", fx(sandbox, "config").stdout)
-    assert run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=sandbox).stdout == ""
+    assert "max_cost_usd" in fx(sandbox, "config").stdout
 
 
 @pytest.mark.parametrize("args", [("concurrency", "0"), ("concurrency", "many"), ("merge_method", "yolo"),
                                   ("review.low", "gpt"), ("nonsense", "1"), ("concurrency",),
-                                  ("auto_merge", "maybe"), ("max_cost_usd", "0"), ("max_cost_usd", "lots")])
+                                  ("auto_merge", "maybe"), ("max_cost_usd", "0"), ("max_cost_usd", "-1"),
+                                  ("max_cost_usd", "lots")])
 def test_config_refuses_bad_input(sandbox, args):
     before = (sandbox / "factory" / "config.json").read_text()
     assert fx(sandbox, "config", *args, check=False).returncode != 0

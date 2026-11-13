@@ -93,6 +93,19 @@ The design choices that carry the weight:
   reviewer. After the build, the files the branch changed can add reviewers
   the issue's wording didn't call for (`surface_paths`). The tables are in
   `factory/config.json`.
+- **Risk decides who merges.** `human_merge` in `factory/config.json` lists
+  the risks, and the surfaces, that a person must merge. `job merge` checks it
+  itself, so an approver's APPROVE on a high-risk job still stops at
+  `needs-human` until someone runs `./fx approve`. A surface counts when intake
+  named it or when the branch changes a file `surface_paths` maps to it.
+- **A measured regression decides who merges, too.** When the checks pass, the
+  gate runs `factory/budget.py` on the branch and on the base and compares
+  them against `budgets` in `factory/config.json` (to start with, at most 10%
+  more Python instructions to clear a fixed day of orders). A branch over
+  budget still passes the gate, but `job merge` stops it at `needs-human` with
+  the numbers in `round-N/checks.md` and `./fx show`. The budget counts
+  instructions, not milliseconds: the count is the same on a busy machine, the
+  time isn't.
 - **Issue text is data.** Agents receive the issue title, text and comments as
   quoted data and are told to ignore instructions inside them.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
@@ -109,7 +122,8 @@ runs the branch's own tests, and test code can print whatever it likes: the
 gate catches a branch that fails honestly, and the reviewers read the diff
 for one that cheats. Use
 `"auto_merge": false` until you trust it, and run it in a container when
-issues come from people you don't know. This is a demo
+issues come from people you don't know: [docs/container.md](docs/container.md)
+has a recipe. This is a demo
 and a design to learn from, not something to point at a production repository
 as it is.
 
@@ -129,12 +143,15 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx deck` | Opens the presentation; show it before `./fx up` and `./fx run` |
 | `./fx demo [run]` | Replays a saved run on the dashboard; no agent runs and it costs nothing |
 | `./fx run [issue]` | Opens Claude Code on `/factory run` |
+| `./fx sweep <kind>` | Opens Claude Code on `/factory sweep`: proposes `perf`, `security`, `cleanup` or `docs` work as unlabelled issues |
 | `./fx issues` | Lists the issues |
 | `./fx new "<title>"` | Files a new issue and queues it; you write the request |
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
 | `./fx unqueue <issue>` | Takes that label off again |
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
+| `./fx retro` | Counts why rounds went back across jobs, and says where a fix would go |
+| `./fx bench` | Sets up replays of past jobs on other models, and compares them with the original |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 2` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
 | `./fx answer <job>` | Answers the question a job asked, so it can go on |
@@ -175,6 +192,14 @@ of your own.
 changes, the state of the issues) is discarded. The setup (`factory/config.json`,
 `factory/checks.sh`, `.claude/` and `AGENTS.md`) is kept and becomes part of
 the new starting point. It lists what it will delete and asks before it does.
+
+Each job has a cost cap, `max_cost_usd` in `factory/config.json`, $5 to start
+with (the first real job cost $1.11). `factory/bin/job` checks it whenever a
+job moves to its next step and refuses to move a job that has gone over; the
+orchestrator then parks it for you to decide. A step that has started always
+finishes, so a job can end up one step over the cap. To show the cap in a demo, lower it with
+`./fx config max_cost_usd 0.5` and run a job. `./fx config max_cost_usd off`
+removes it.
 
 ## Running it
 
@@ -242,7 +267,7 @@ to produce. A model decides at each step, so a run can differ.
 |---|---------|--------------------|
 | 1 | Base and peak price in the order book | The short path: no page changes, so one code reviewer, then a merge |
 | 2 | Chart the day's hourly prices, with base and peak lines | Merges after UX, UI and security review |
-| 3 | A merit-order page per hour: supply and demand step chart, marginal order | Merges after a larger build, possibly in more than one round |
+| 3 | A merit-order page per hour: supply and demand step chart, marginal order | Waits until issue 2 merges (`blocked_by: 2`: both change the prices page), then merges after a larger build, possibly in more than one round |
 | 4 | A form to place and withdraw bids and offers | Built and reviewed, then the approver escalates: a new endpoint that changes orders, with no sign-in |
 | 5 | A CSV of accepted orders, with pro-rata fills at the clearing price | Built and reviewed, then the approver escalates: an export of per-participant data |
 | 6 | Block orders across several hours | Intake asks first: how blocks clear is a market-design decision |
@@ -254,7 +279,7 @@ change to `dayahead/web.py` brings in the UX, UI and security reviewers, who
 look at the rendered page only when `agent-browser` is installed.
 
 The sandbox starts careful: `concurrency` is 1, so one job runs at a time, and
-`max_cost_usd` is 10, so a job that has cost more than $10 stops at its next
+`max_cost_usd` is 5, so a job that has cost more than $5 stops at its next
 step and waits for you. `./fx config` shows both and changes them. The cost
 and duration of each demo issue on **dayahead** have not been measured yet.
 
@@ -302,6 +327,12 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   model no longer stops a job; an optional `factory/worktree-setup.sh` that
   prepares each job's worktree (env files, test credentials); tests in
   `factory/tests/`.
+- Sweeps: `./fx sweep <kind>` reads the base branch and files at most
+  `sweep.max_issues` findings as issues without the `factory` label, skipping
+  any that match an open issue (`job propose`). Nothing a sweep files runs
+  until a person queues it. Scheduling sweeps is not built yet.
+- An issue file can name the issues it waits for (`blocked_by: 3, 4`);
+  `job queue` holds it, without a slot, until they are closed.
 - `fx` wraps the common commands, and `./fx setup` makes a clone its own
   sandbox; `factory/local-setup.sh` makes an extra copy.
 - Windows (November 2026): the factory runs natively on Windows as well as on
@@ -314,10 +345,30 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   on; cards show a merge commit, a quiet timer and an incomplete cost.
   A summary strip shows the factory as a whole: requests by outcome, estimated
   cost, time to merge, first-try merges, gate failures, which reviewers asked
-  for changes, time by station, and the run `./fx reset --keep` saved last.
+  for changes, why rounds went back, time by station, and the run
+  `./fx reset --keep` saved last.
+- Failure labels (`factory/bin/labels.py`, `factory/bin/retro`, `./fx retro`):
+  every failed gate is labelled by its cause (lint, a failing test, removed or
+  skipped tests, a timeout, a protected path), and reviewers tag each finding
+  (`[spec-gap]`, `[redundant-test]` and so on). `job sync` counts them into
+  `job.json`; `./fx retro` counts them across jobs and, for a label seen often
+  enough, names the prompt or file a fix would most likely change. A person
+  makes that change: the gate fails any job that edits `.claude/` or
+  `factory/config.json`, so the factory can't rewrite its own setup.
+- Model replay (`factory/bin/bench`, `./fx bench`): public benchmarks say little
+  about how a model does on this repository, so `./fx bench plan <job>...
+  --try builder=sonnet --try builder=haiku` sets up replays of jobs the factory
+  already did, each from the job's starting commit and with its sealed spec.
+  `./fx bench report <bench>` compares each choice with the jobs as they first
+  ran: gate passes, approvals, rounds, cost and why rounds went back. A replay
+  spends real tokens, so `plan` prints a rough estimate and `--max-usd` refuses
+  a bench over it. `./fx bench run` is not built yet: starting the agents with
+  no one at the keyboard needs the deterministic driver loop. Until the
+  acceptance tests land, "approved" means only that the gate, the reviewers and
+  the approver passed it.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
-- `docs/presentation.html` and `docs/local-mode.md` are new.
+- `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.
 
 ## Licence
 

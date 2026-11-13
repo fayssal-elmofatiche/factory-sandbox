@@ -8,3 +8,5 @@ __pycache__/
 /.claude/worktrees/
 /.claude/settings.local.json
 /factory/replay/
+/factory/bench/
+/factory/sweeps/
