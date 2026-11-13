@@ -2,7 +2,8 @@
 """The only writer of factory/jobs/<job-id>/job.json.
 
 Modified from ZazenCodes Software Factory v2 (GPLv3), November 2026: tracker
-and host adapters, commit pinning, sealed files, park, merge retry, one lock.
+and host adapters, commit pinning, sealed files, park, merge retry, one lock,
+acceptance tests.
 
 Every stage change goes through `advance`, which checks the files that justify
 it and refuses anything else. Tracker and host side effects that belong to a
@@ -20,6 +21,7 @@ Usage:
   job merge <job>                APPROVE → sync with the base branch, gate, merge; also retries a failed merge
   job approve <job>              needs-human → you approve it: the factory merges the commit the gate passed
   job feedback <job>             needs-human → back to work, with your feedback (stdin) as feedback-<k>.md
+  job feedback <job> --spec      needs-human → back to the spec writer: the spec or its acceptance tests are wrong
   job reject <job>               needs-info or needs-human → rejected, with your reason (stdin) as rejection.md
   job park <job>                 any running stage → needs-human, with your reason (stdin)
   job show <job>                 what a person needs to decide on a job: stage, decision, diff, next commands
@@ -40,16 +42,20 @@ Usage:
 
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import acceptance_tests as acceptance
 import labels as failure_labels
 import portable
 
@@ -583,10 +589,10 @@ def reviewers(job):
     return list(job["agents"]["reviewers"])
 
 
-def numbered(d, stem):
+def numbered(d, stem, suffix=".md"):
     """feedback-1.md, feedback-2.md, ... in number order."""
-    found = [(int(m.group(1)), p) for p in d.glob(f"{stem}-*.md")
-             if (m := re.fullmatch(rf"{stem}-(\d+)\.md", p.name))]
+    found = [(int(m.group(1)), p) for p in d.glob(f"{stem}-*{suffix}")
+             if (m := re.fullmatch(rf"{stem}-(\d+){re.escape(suffix)}", p.name))]
     return [p for _, p in sorted(found)]
 
 
@@ -633,8 +639,8 @@ def archive(job, name):
     path = d / name
     if not path.exists():
         return None
-    stem = name.removesuffix(".md")
-    new = f"{stem}-{len(numbered(d, stem)) + 1}.md"
+    stem, suffix = path.stem, path.suffix
+    new = f"{stem}-{len(numbered(d, stem, suffix)) + 1}{suffix}"
     path.rename(d / new)
     files = job.get("files", {})
     if name in files:
@@ -973,7 +979,86 @@ def remove_worktree(job):
     run(["git", "branch", "-D", job["branch"]], check=False)
 
 
-def advance(job, stage, park=False):
+def run_acceptance_on_base(job):
+    """Run the accepted acceptance tests once on origin/<base>, before any code
+    for them is written, and record how they did. Tests that already pass test
+    nothing new: that is worth a warning, not a refusal. Never the job's
+    worktree: after `job feedback --spec` it holds the earlier build."""
+    d = job_dir(job["id"])
+    run(["git", "fetch", "origin", BASE])
+    commit = run(["git", "rev-parse", f"origin/{BASE}"]).stdout.strip()
+    tar = subprocess.run(["git", "archive", "--format=tar", commit], cwd=REPO, capture_output=True)
+    require(tar.returncode == 0, f"`git archive {commit[:7]}` failed: {tar.stderr.decode(errors='replace').strip()}")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as base:
+        with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
+            # The "data" filter refuses links and paths that leave the folder (Python 3.12, backported).
+            archive.extractall(base, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+        code, out, seconds = acceptance.run(base, d / acceptance.NAME, CONFIG.get("gate_timeout_seconds", 1800))
+    passed, failed = acceptance.counts(out)
+    tail = "\n".join(out.rstrip().splitlines()[-40:])
+    (d / "acceptance-base.md").write_text(
+        f"ACCEPTANCE ON BASE: {passed} passed, {failed} failed\n\n"
+        f"The spec writer's {acceptance.NAME}, run on {commit[:7]} (origin/{BASE}) before the build, "
+        f"exit {code} in {seconds}s. "
+        f"Tests that pass here already don't test anything new.\n\n```\n{tail}\n```\n")
+    event(job, "acceptance-base", commit=commit, passed=passed, failed=failed, exit=code)
+    if code == 0:
+        warn(f"every acceptance test already passes on {commit[:7]}, before any code is written: "
+             f"they don't test anything new. See factory/jobs/{job['id']}/acceptance-base.md")
+
+
+def lint_acceptance(job):
+    """ruff on acceptance.py as it will be linted once it is acceptance/test_<id>.py,
+    with the main checkout's settings. Refused now, while the spec writer can fix it:
+    at merge a lint error fails the gate and nobody may touch the file."""
+    ruff = shutil.which("ruff")
+    if not ruff:
+        warn(f"ruff isn't installed, so {acceptance.NAME} isn't linted; factory/checks.sh will fail without it")
+        return
+    config = ["--config", str(REPO / "pyproject.toml")] if (REPO / "pyproject.toml").exists() else []
+    res = subprocess.run([ruff, "check", *config, "--stdin-filename", acceptance.kept_path(job["id"]), "-"],
+                         cwd=REPO, input=(job_dir(job["id"]) / acceptance.NAME).read_bytes(), capture_output=True)
+    out = (res.stdout + res.stderr).decode(errors="replace").strip()
+    require(res.returncode == 0, f"`ruff check` fails on {acceptance.NAME}, which joins acceptance/ at merge "
+            f"and is linted there:\n\n{out}")
+
+
+def add_acceptance_to_suite(job):
+    """Commit the job's acceptance tests to the permanent suite on its branch,
+    once: a retried merge finds them there and commits nothing."""
+    rel = acceptance.kept_path(job["id"])
+    target = Path(job["worktree"]) / rel
+    tests = (job_dir(job["id"]) / acceptance.NAME).read_bytes()
+    if target.exists() and target.read_bytes() == tests:
+        return
+    target.parent.mkdir(exist_ok=True)
+    target.write_bytes(tests)
+    git(job, "add", rel)
+    # The bytes can differ only in line endings (CRLF from the job folder on Windows, LF in the
+    # checkout): git then stages nothing, and the tests are already on the branch.
+    if git(job, "diff", "--cached", "--quiet", "--", rel, check=False).returncode == 0:
+        return
+    git(job, "commit", "-q", "-m", f"Acceptance tests for {job['id']} (issue {job['issue']})")
+
+
+def drop_superseded_tests(job):
+    """After `job feedback --spec`: a failed merge may have left the old tests
+    committed as acceptance/test_<id>.py on the branch. The new ones differ, so
+    every later gate would fail on a guarded path the builder may not touch:
+    remove the file with a commit of its own and push the branch."""
+    rel = acceptance.kept_path(job["id"])
+    if not Path(job["worktree"]).exists():
+        return
+    git(job, "fetch", "origin", BASE, check=False)
+    on_tip = git(job, "cat-file", "-e", f"HEAD:{rel}", check=False).returncode == 0
+    on_base = git(job, "cat-file", "-e", f"origin/{BASE}:{rel}", check=False).returncode == 0
+    if on_tip and not on_base:
+        git(job, "rm", "-q", "--", rel)
+        git(job, "commit", "-q", "-m", f"Drop superseded acceptance tests for {job['id']}", "--", rel)
+        git(job, "push", "-q", "origin", f"HEAD:refs/heads/{job['branch']}")
+
+
+def advance(job, stage, park=False, respec=False):
     old = job["stage"]
     require(stage in TRANSITIONS.get(old, set()) or (stage == "merged" and old not in TERMINAL)
             or (park and stage == "needs-human" and old in PARKABLE),
@@ -1036,8 +1121,15 @@ def advance(job, stage, park=False):
 
     elif old == "spec":
         require((d / "spec.md").exists(), "spec.md doesn't exist")
-        seal(job, "spec.md")
+        tests = CONFIG.get("acceptance", True)
+        if tests:
+            problem = acceptance.problem(d / acceptance.NAME)
+            require(not problem, problem)
+            lint_acceptance(job)
+        seal(job, "spec.md", *([acceptance.NAME] if tests else []))
         next_round(job)
+        if tests:
+            run_acceptance_on_base(job)
 
     elif old == "build" and stage == "gate":
         build = d / "build.md"
@@ -1143,7 +1235,18 @@ def advance(job, stage, park=False):
                 job["intake"] = None
                 write_issue_md(job)
             elif stage == "spec":
-                require(origin == "spec", "only a job parked during spec goes back to spec")
+                require(origin == "spec" or respec, "only a job parked during spec goes back to spec; "
+                        "`job feedback --spec` sends another back to the spec writer")
+                if origin != "spec":
+                    require(origin != "intake", "this job was parked during intake: `job feedback` resumes it there")
+                    # The spec or its tests were wrong: keep them, and start the rounds afresh.
+                    archive(job, "spec.md")
+                    archive(job, acceptance.NAME)
+                    job["round_limit"] = job["round"] + CONFIG["max_rounds"]
+                    drop_superseded_tests(job)
+                # Nothing gated under the old tests may be approved or merged.
+                for key in ("gated_sha", "synced_sha", "built_sha", "approved_decision"):
+                    job[key] = None
             else:
                 require(origin not in {"intake", "spec"},
                         f"this job was parked during {origin}: `job feedback` resumes it there")
@@ -1329,6 +1432,7 @@ def cmd_merge(job):
             return fail(f"Approved and gated, but config.json (`human_merge`, `budgets`) says a person merges this job: "
                         f"{'; '.join(why)}. To merge it, run `./fx approve {job['id']}` "
                         f"(or `factory/bin/job approve {job['id']}`): the factory syncs with {BASE}, "
+                        f"adds the job's acceptance tests as {acceptance.kept_path(job['id'])}, "
                         f"runs the gate again and merges.", retry=False)
 
     for attempt in range(1, MERGE_ATTEMPTS + 1):
@@ -1337,6 +1441,8 @@ def cmd_merge(job):
         if merged.returncode != 0:
             git(job, "merge", "--abort", check=False)
             return fail(f"The branch conflicts with {BASE}:\n\n```\n{merged.stdout.strip()}\n```", retry=False)
+        if CONFIG.get("acceptance", True) and (job_dir(job["id"]) / acceptance.NAME).exists():
+            add_acceptance_to_suite(job)
         job["synced_sha"] = git(job, "rev-parse", "HEAD").stdout.strip()
         save(job)
         gate = subprocess.run(portable.script(BIN / "gate", job["id"], "--merge"), capture_output=True, text=True)
@@ -1365,16 +1471,18 @@ def cmd_merge(job):
     done()
 
 
-def cmd_feedback(job, text):
+def cmd_feedback(job, text, respec=False):
     if job["stage"] != "needs-human":
         die(f"{job['id']} is in {job['stage']}, not needs-human")
     if not text.strip():
         die("no feedback on stdin")
+    if respec and job.get("parked_from") == "intake":
+        die(f"{job['id']} was parked during intake; it has no spec yet. `job feedback` without --spec resumes it")
     d = job_dir(job["id"])
     k = len(numbered(d, "feedback")) + 1
     (d / f"feedback-{k}.md").write_text(f"# Feedback {k}\n\nFrom @{operator()} after the job escalated.\n\n{text.strip()}\n")
-    target = job.get("parked_from") if job.get("parked_from") in {"intake", "spec"} else "build"
-    job = advance(sync(job), target)
+    target = "spec" if respec else job.get("parked_from") if job.get("parked_from") in {"intake", "spec"} else "build"
+    job = advance(sync(job), target, respec=respec)
     seal(job, f"feedback-{k}.md")
     save(job)
     print(f"{job['id']}: feedback-{k}.md, {job['stage']} (round {job['round']})")
@@ -1456,6 +1564,8 @@ def cmd_show(job):
         else:
             print("  (it can't be approved as it is: no commit at its tip has passed the gate)")
         print(f"  ./fx feedback {job['id']} <what should change>     send it back to work")
+        print(f"  ./fx feedback {job['id']} --spec <what is wrong>   the spec or its acceptance tests are wrong: "
+              "back to the spec writer")
         print(f"  ./fx reject {job['id']} <why>       drop it")
     elif job["stage"] == "needs-info":
         print(f"  ./fx answer {job['id']} <your answer>       answer the question, then ./fx run")
@@ -1601,8 +1711,8 @@ def main(argv):
             cmd_merge(resolve(args[0]))
         elif cmd == "approve" and len(args) == 1:
             cmd_approve(sync(resolve(args[0])))
-        elif cmd == "feedback" and len(args) == 1:
-            cmd_feedback(resolve(args[0]), text)
+        elif cmd == "feedback" and (len(args) == 1 or args[1:] == ["--spec"]):
+            cmd_feedback(resolve(args[0]), text, respec=len(args) == 2)
         elif cmd == "reject" and len(args) == 1:
             cmd_reject(resolve(args[0]), text)
         elif cmd == "park" and len(args) == 1:

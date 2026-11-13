@@ -586,13 +586,13 @@ def words(args, what):
     return "\n".join(line for line in lines if not line.startswith(CUT)).strip()
 
 
-def decide(verb, args, what):
+def decide(verb, args, what, flags=()):
     if not args:
         die(f"usage: fx {verb} <job> [words]")
     text = words(args[1:], what)
     if not text.strip():
         die("nothing written; nothing changed")
-    code = subprocess.run(portable.script(JOB, verb, args[0]), cwd=REPO, input=text, text=True).returncode
+    code = subprocess.run(portable.script(JOB, verb, args[0], *flags), cwd=REPO, input=text, text=True).returncode
     if code == 0 and verb in {"feedback", "answer"}:
         print("Run ./fx run to put the factory back to work on it.")
     return code
@@ -1094,7 +1094,8 @@ COMMANDS = [
     ("feedback", "send a waiting job back to work with your instructions",
      "Your words go to the factory as feedback-<k>.md and the job goes back to work.\n"
      + "Write them after the job, pipe them in, or leave them out to type them in your editor.\n"
-     "Then run `fx run` so the factory picks the job up."),
+     "With --spec it goes back to the spec writer instead, when the spec or its acceptance\n"
+     "tests are wrong. Then run `fx run` so the factory picks the job up."),
     ("reject", "drop a waiting job, with your reason",
      "Your reason is posted on the issue. Write it after the job, pipe it in, or leave\n"
      "it out to type it in your editor."),
@@ -1142,6 +1143,8 @@ def build_parser():
     for name, what in (("answer", "your answer"), ("feedback", "what should change"), ("reject", "why it is dropped"),
                        ("park", "why it is stopped")):
         made[name].add_argument("words", nargs="*", help=f"{what}; left out, it comes from stdin or your editor")
+    made["feedback"].add_argument("--spec", action="store_true",
+                                  help="the spec or its acceptance tests are wrong: back to the spec writer")
     made["approve"].add_argument("--yes", action="store_true", help="don't ask for confirmation")
     made["retro"].add_argument("--threshold", type=int, default=3, help="propose a fix from this many (default 3)")
     made["retro"].add_argument("--all", action="store_true", help="also count runs saved by `fx reset --keep`")
@@ -1207,6 +1210,9 @@ def dispatch(ns):
     if cmd == "answer":
         return decide("answer", [ns.job, *ns.words], "Your answer to the question. It is posted on the issue.")
     if cmd == "feedback":
+        if ns.spec:
+            return decide("feedback", [ns.job, *ns.words], "What is wrong with the spec or its acceptance tests? "
+                          "Your words go to the spec writer.", flags=["--spec"])
         return decide("feedback", [ns.job, *ns.words], "What should change? Your words go to the builder.")
     if cmd == "reject":
         return decide("reject", [ns.job, *ns.words], "Why is this job dropped? Your reason is posted on the issue.")
@@ -1230,6 +1236,9 @@ def main(argv):
     if not argv or argv[0] == "help":
         parser.print_help()
         return 0
+    if argv[0] == "feedback" and "--spec" in argv[1:]:
+        # argparse takes the words only before an option, and people write it after the job.
+        argv = ["feedback", "--spec", *(a for a in argv[1:] if a != "--spec")]
     return dispatch(parser.parse_args(argv)) or 0
 
 

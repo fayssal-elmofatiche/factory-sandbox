@@ -151,16 +151,21 @@ machine, not part of the project.
 
 - **Intake** posts its verdict as a comment on the issue.
 - **The builder** commits and pushes its `factory/<job-id>` branch to `origin`.
-- **APPROVE** makes `factory/bin/job merge` sync the branch with the base, run
-  the gate again, merge the branch into the base and push. The push is the
+- **APPROVE** makes `factory/bin/job merge` sync the branch with the base,
+  commit the job's acceptance tests to `acceptance/`, run the gate again, merge
+  the branch into the base and push. The push is the
   atomic step: git refuses it if the base moved after the sync, and the factory
   then syncs and gates again. The issue is then closed, with the merge commit noted
   on it.
 - **ESCALATE** posts the decision on the issue and labels it
   `factory:needs-human`. To approve, run `./fx approve <job>`: the factory
-  syncs the branch with the base, runs the gate again, merges and pushes. You
+  syncs the branch with the base, commits the job's acceptance tests as
+  `acceptance/test_<job_id>.py`, runs the gate again, merges and pushes. You
   can also merge the branch into the base and push by hand; the next
-  `factory/bin/job queue` moves the job to `merged`. This works
+  `factory/bin/job queue` moves the job to `merged`. A merge by hand doesn't
+  add the acceptance tests: to keep them, copy
+  `factory/jobs/<job>/acceptance.py` to `acceptance/test_<job_id>.py` (`-` in
+  the id written as `_`) and commit it with the merge. This works
   for a branch that has passed the gate, merged with a merge commit or a
   fast-forward.
   For anything else (a squash, a rebase, a branch that never passed the

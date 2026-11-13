@@ -49,8 +49,11 @@ APPROVE only if all of these hold:
   you find convincing. Spot-check at least one criterion yourself; for a
   criterion about a page, start the dev server from AGENTS.md in the worktree
   on the port in your prompt, look, and stop it again.
-- The final round's `checks.md` says `GATE: PASS`, every review in it is
-  `VERDICT: PASS`, and no Note in them describes a real problem.
+- The final round's `checks.md` says `GATE: PASS`, with its `## Acceptance
+  tests` section passing, every review in it is `VERDICT: PASS`, and no Note in
+  them describes a real problem.
+- The criteria the spec lists as not covered by `acceptance.py` are met too:
+  the gate checked the others, you check these.
 - The change stays inside intake's Scope.
 - build.md's `## Risk and impact` matches the diff: compare its Risk,
   Structure and Outside the diff lines with `git diff --stat` and the code. It

@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "acceptance"]
 pythonpath = ["."]
 
 [tool.ruff]
