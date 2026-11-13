@@ -238,6 +238,8 @@ def test_concurrency_is_respected(sb):
 
 
 def test_a_job_over_max_cost_usd_is_parked_counting_headless_sessions(sb):
+    config = sb.repo / "factory/config.json"  # the sandbox turns the cap off; this test needs one
+    config.write_text(json.dumps({**json.loads(config.read_text()), "max_cost_usd": 5.0}, indent=2))
     queue(sb, "Add a thing")
     drive = Drive(sb, {"tokens": 1_000_000})  # $4.00 a call on claude-opus-5-5; the cap is $5.00
     drive.run()
