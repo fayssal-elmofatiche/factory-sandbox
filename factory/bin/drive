@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+"""The factory's driver: a script, not an LLM session, moves jobs between stations.
+
+Usage:
+  drive              drain the queue: every open `factory` issue, `concurrency` at a time; also resumes
+  drive <issue>      run one issue
+
+It does what `/factory run` asks of the orchestrator in .claude/skills/factory/SKILL.md,
+and nothing else. It loops: `job queue`, start each `new` and `resume` line at its
+stage, wait for the agents, run the next step for each job whose agents finished,
+`job queue` again. It stops when nothing is running and nothing can start, then
+prints `job summary` for the jobs it touched and what waits on a person.
+
+Every agent is its own headless Claude Code process, started in the main checkout:
+
+  claude -p --agent <name> [--model <reviewer model>] --output-format json
+         --permission-mode dontAsk --allowedTools <the agent's tools> --settings <hooks>
+
+with the prompt on stdin. The prompt is the one SKILL.md specifies: the job's
+header line, then the round, the port and what the step is for.
+
+The agents' frontmatter hooks (the guard, and the builder's checks at Stop) run
+in `claude -p` only in a folder whose trust prompt was accepted; elsewhere
+Claude Code skips them without a word. So the driver passes the guard again
+with --settings, which `claude -p` runs in any folder. In a trusted folder the
+guard then runs twice, which changes nothing. The builder's Stop hook goes
+through --settings only when the folder isn't trusted, so the checks don't run
+twice.
+
+The decisions are the ones SKILL.md lists under "Advancing a job" and
+"Resuming": each agent's file's first line picks the next `factory/bin/job`
+call, and the scripts refuse anything illegal. An agent whose file is missing
+is resumed once; if the file is still missing, the job is parked. A refusal the
+driver can't fix by running the step again parks the job with the refusal's
+words, so it waits for a person instead of blocking a slot.
+
+Killed, the driver leaves its state in files like any orchestrator: the next
+`drive` stops the agents the dead one left behind and resumes every job from
+its stage. Only one driver runs at a time.
+
+Modified from ZazenCodes Software Factory v2 (GPLv3), November 2026.
+"""
+
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import portable
+
+if __name__ == "__main__":
+    portable.utf8()
+
+REPO = Path(__file__).resolve().parents[2]
+FACTORY = REPO / "factory"
+JOBS = FACTORY / "jobs"
+BIN = FACTORY / "bin"
+AGENTS = REPO / ".claude" / "agents"
+CONFIG = json.loads((FACTORY / "config.json").read_text())
+BASE = CONFIG["base_branch"]
+STATE = JOBS / ".drive"  # the driver's pid, its agents' pids, and each agent's output
+POLL = float(os.environ.get("FACTORY_DRIVE_POLL", "2"))
+# Tests put a script that writes fixed files in Claude Code's place, so no model is called.
+STAND_IN = os.environ.get("FACTORY_DRIVE_CLAUDE")
+RUNNING = {"intake", "spec", "build", "gate", "review", "approve", "merging"}
+FINISHED = {"merged", "rejected", "needs-info", "needs-human"}
+OFFSET = {"builder": 0, "reviewer-ux": 1, "reviewer-ui": 2, "approver": 3}  # ports, as SKILL.md gives them
+GUARD_ROLE = {"intake": "intake", "spec-writer": "spec-writer", "builder": "builder", "approver": "approver"}
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+def die(msg):
+    print(f"drive: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+class Refused(Exception):  # noqa: N818
+    pass
+
+
+def job(*args, stdin=None, check=True):
+    """Run factory/bin/job. A refusal raises Refused with the script's own words."""
+    res = subprocess.run(portable.script(BIN / "job", *args), cwd=REPO, capture_output=True, text=True,
+                         input=stdin)
+    if res.stderr.strip() and res.returncode == 0:
+        print(res.stderr.rstrip(), file=sys.stderr)
+    if check and res.returncode != 0:
+        raise Refused((res.stderr or res.stdout).strip().removeprefix("job: ") or f"job {args[0]} failed")
+    return res
+
+
+def load(job_id):
+    return json.loads((JOBS / job_id / "job.json").read_text())
+
+
+def first_line(path):
+    return path.read_text(encoding="utf-8").split("\n", 1)[0].strip() if path.exists() else None
+
+
+def header(j):
+    return (f"Job: {j['id']}. Job folder: {JOBS / j['id']}/. Main checkout: {REPO}. Worktree: {j['worktree']}. "
+            f"Branch: {j['branch']}. Base: origin/{BASE}. Issue: #{j['issue']}.")
+
+
+def port(j, agent):
+    ports = CONFIG.get("ports", {"base": 5100, "step": 10})
+    return ports["base"] + ports["step"] * int(j["id"][:3]) + OFFSET[agent]
+
+
+def tools(agent):
+    """The agent's `tools:` line, which becomes --allowedTools: with dontAsk, nothing else is allowed."""
+    m = re.search(r"^tools:\s*(.+)$", (AGENTS / f"{agent}.md").read_text(encoding="utf-8"), re.M)
+    return [t.strip() for t in m.group(1).split(",")] if m else []
+
+
+def folder_trusted():
+    """Has this folder's trust prompt been accepted? `./fx doctor` asks the same."""
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home())
+    try:
+        projects = json.loads((home / ".claude.json").read_text(encoding="utf-8")).get("projects", {})
+    except (OSError, ValueError, AttributeError):
+        return False
+
+    def spell(path):
+        return path.lower() if portable.WINDOWS else path
+    wanted = {spell(k) for path in (REPO, REPO.resolve()) for k in (str(path), path.as_posix())}
+    return any(spell(key) in wanted and bool(p.get("hasTrustDialogAccepted")) for key, p in projects.items())
+
+
+def hooks(agent, trusted):
+    """The hooks the agent's frontmatter declares, for --settings: `claude -p` runs these in any folder."""
+    role = "reviewer" if agent.startswith("reviewer-") else GUARD_ROLE[agent]
+    command = lambda tail: {"type": "command", "command": f'"$CLAUDE_PROJECT_DIR"/factory/bin/{tail}'}  # noqa: E731
+    out = {"PreToolUse": [{"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+                           "hooks": [command(f"guard {role}")]}]}
+    if agent == "builder" and not trusted:
+        out["Stop"] = [{"hooks": [command("gate --hook")]}]
+    return {"hooks": out}
+
+
+def claude_argv(agent, model, resume, trusted):
+    if STAND_IN:
+        base = portable.script(STAND_IN)
+    else:
+        claude = shutil.which("claude")
+        if not claude:
+            die("Claude Code is not installed; run ./fx doctor")
+        base = [claude]
+    argv = base + ["-p", "--agent", agent, "--output-format", "json", "--permission-mode", "dontAsk",
+                   "--allowedTools", ",".join(tools(agent)), "--settings", json.dumps(hooks(agent, trusted))]
+    if model:
+        argv += ["--model", model]
+    if resume:
+        argv += ["--resume", resume]
+    return argv
+
+
+class Agent:
+    def __init__(self, job_id, name, file, prompt, model=None):
+        self.job_id, self.name, self.file, self.prompt, self.model = job_id, name, file, prompt, model
+        self.retried = False  # resumed once already because its file was missing
+        self.refused = False  # a builder resumed once already because job advance refused its build
+        self.proc = None
+        self.out = None
+
+    def label(self):
+        return self.name.removeprefix("reviewer-") if self.name.startswith("reviewer-") else self.name
+
+
+class Driver:
+    def __init__(self, only=None):
+        self.only = only
+        self.agents = {}  # job id → its running Agents
+        self.touched = []
+        self.seen = {}  # job id → (stage, round) when the driver last picked it up from the queue
+        self.given_up = set()
+        self.trusted = folder_trusted()
+        self.count = 0
+
+    # ---- state on disk ------------------------------------------------------
+
+    def save_state(self):
+        pids = {str(a.proc.pid): [a.job_id, a.name] for agents in self.agents.values() for a in agents}
+        tmp = STATE / "drive.tmp"
+        tmp.write_text(json.dumps({"pid": os.getpid(), "agents": pids}, indent=2) + "\n")
+        tmp.replace(STATE / "drive.json")
+
+    def claim(self):
+        """Only one driver at a time; stop the agents a driver that died left behind."""
+        STATE.mkdir(parents=True, exist_ok=True)
+        path = STATE / "drive.json"
+        if path.exists():
+            try:
+                old = json.loads(path.read_text())
+            except ValueError:
+                old = {}
+            if old.get("pid") and old["pid"] != os.getpid() and portable.alive(old["pid"]):
+                die(f"another driver is running (pid {old['pid']}). Stop it first, or wait for it. If no driver "
+                    f"runs, delete {path.relative_to(REPO).as_posix()}")
+            for pid, (job_id, name) in (old.get("agents") or {}).items():
+                if portable.alive(int(pid)):
+                    say(f"{job_id}: stopping {name} (pid {pid}), left running by a driver that stopped")
+                    portable.stop_group(int(pid))
+        self.save_state()
+
+    def release(self):
+        for agents in self.agents.values():
+            for a in agents:
+                portable.stop_group(a.proc.pid)
+        self.agents.clear()
+        (STATE / "drive.json").unlink(missing_ok=True)
+
+    # ---- agents -------------------------------------------------------------
+
+    def spawn(self, agent, resume=None):
+        self.count += 1
+        stem = STATE / f"{agent.job_id}-{agent.name}-{self.count}"
+        agent.out = stem.with_suffix(".json")
+        with open(agent.out, "w") as out, open(stem.with_suffix(".log"), "w") as err:
+            agent.proc = subprocess.Popen(claude_argv(agent.name, agent.model, resume, self.trusted),
+                                          cwd=REPO, stdin=subprocess.PIPE, stdout=out, stderr=err, text=True,
+                                          **portable.own_group())
+        agent.proc.stdin.write(agent.prompt)
+        agent.proc.stdin.close()
+        self.agents.setdefault(agent.job_id, []).append(agent)
+        self.save_state()
+
+    def session(self, agent):
+        try:
+            return json.loads(agent.out.read_text()).get("session_id")
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def wait(self):
+        """Block until at least one agent has finished, then take each finished one forward."""
+        while True:
+            done = [a for agents in self.agents.values() for a in agents if a.proc.poll() is not None]
+            if done:
+                break
+            time.sleep(POLL)
+        for a in done:
+            self.agents[a.job_id].remove(a)
+            if not self.agents[a.job_id]:
+                del self.agents[a.job_id]
+            self.save_state()
+            self.guarded(a.job_id, self.finished, a)
+
+    # ---- the loop -----------------------------------------------------------
+
+    def run(self):
+        self.claim()
+        try:
+            while True:
+                while self.pull():
+                    pass
+                if not self.agents:
+                    break
+                self.wait()
+        finally:
+            self.release()
+        self.report()
+
+    def pull(self):
+        """Start what `job queue` says can start. True when something was started or moved."""
+        moved = False
+        try:
+            lines = job("queue").stdout.splitlines()
+        except Refused as e:
+            die(f"factory/bin/job queue failed: {e}")
+        for line in lines:
+            action, issue, job_id, stage, note = (line.split("\t") + [""] * 5)[:5]
+            if self.only and issue != self.only:
+                continue
+            if job_id in self.agents or job_id in self.given_up:
+                continue
+            if action == "new":
+                try:
+                    job_id = job("create", issue).stdout.strip()
+                except Refused as e:
+                    say(f"#{issue}: {e}")
+                    self.given_up.add(f"#{issue}")
+                    continue
+                self.touch(job_id)
+                say(f"{job_id} #{issue}: created → intake")
+                self.guarded(job_id, self.start, job_id)
+                moved = True
+            elif action == "resume":
+                j = load(job_id)
+                key = (j["stage"], j["round"])
+                self.touch(job_id)
+                if self.seen.get(job_id) == key:
+                    self.park(job_id, f"The driver could not move the job out of {j['stage']} "
+                                      f"(round {j['round']}); the step left it there.")
+                    moved = True
+                    continue
+                self.seen[job_id] = key
+                say(f"{job_id} #{issue}: resume at {stage}")
+                self.guarded(job_id, self.resume, job_id)
+                moved = True
+            elif action == "skip" and stage in RUNNING:
+                # A running job whose issue is closed or unlabeled: SKILL.md parks it.
+                self.touch(job_id)
+                self.park(job_id, note)
+                moved = True
+        return moved
+
+    def touch(self, job_id):
+        if job_id not in self.touched:
+            self.touched.append(job_id)
+
+    def guarded(self, job_id, step, *args):
+        """Run one step; a refusal parks the job with the script's words."""
+        try:
+            step(*args)
+        except Refused as e:
+            self.park(job_id, str(e))
+
+    def park(self, job_id, why):
+        for a in self.agents.pop(job_id, []):
+            portable.stop_group(a.proc.pid)
+        self.save_state()
+        res = job("park", job_id, stdin=why + "\n", check=False)
+        if res.returncode == 0:
+            say(f"{job_id}: parked → needs-human: {why.splitlines()[0]}")
+        else:
+            say(f"{job_id}: could not park it ({(res.stderr or res.stdout).strip()}); "
+                f"leaving it for this run. Reason: {why.splitlines()[0]}")
+        self.given_up.add(job_id)
+
+    def advance(self, job_id, stage):
+        out = job("advance", job_id, stage).stdout.strip()
+        say(out.splitlines()[-1] if out else f"{job_id}: {stage}")
+        return load(job_id)
+
+    def report(self):
+        if self.touched:
+            say("")
+            say(job("summary", *self.touched, check=False).stdout.rstrip())
+        waiting = [line.split("\t") for line in job("queue", check=False).stdout.splitlines()
+                   if line.startswith("wait\t")]
+        if waiting:
+            say("\nWaiting on a person:")
+            for _, issue, job_id, stage, note in ((w + [""] * 5)[:5] for w in waiting):
+                say(f"  {job_id} #{issue} {stage}: {note}  (./fx show {job_id})")
+        if any(load(j)["stage"] == "merged" for j in self.touched if (JOBS / j / "job.json").exists()):
+            say(f"\nA job merged: `git pull` in {REPO} shows the merged work.")
+
+    # ---- stages: starting -----------------------------------------------------
+
+    def resume(self, job_id):
+        j = load(job_id)
+        if j["stage"] == "needs-info":  # the author replied
+            j = self.advance(job_id, "intake")
+        self.start(job_id, resumed=True)
+
+    def start(self, job_id, resumed=False):
+        j = load(job_id)
+        stage, d = j["stage"], JOBS / job_id
+        if stage == "intake":
+            self.spawn(Agent(job_id, "intake", d / "intake.md", header(j) + feedback_note(j, d / "intake.md")))
+        elif stage == "spec":
+            self.spawn(Agent(job_id, "spec-writer", d / "spec.md", header(j) + feedback_note(j, d / "spec.md")))
+        elif stage == "build":
+            self.spawn_builder(j, build_purpose(j, resumed))
+        elif stage == "gate":
+            self.gate(job_id)
+        elif stage == "review":
+            self.spawn_reviewers(j)
+        elif stage == "approve":
+            self.spawn_approver(j)
+        elif stage == "merging":
+            self.merge(job_id)
+
+    def spawn_builder(self, j, purpose):
+        prompt = f"{header(j)} Build round {j['round']}. Port: {port(j, 'builder')}. {purpose}"
+        self.spawn(Agent(j["id"], "builder", JOBS / j["id"] / "build.md", prompt))
+
+    def spawn_reviewers(self, j):
+        """Every routed reviewer whose file for this round is missing, all at once."""
+        rd = JOBS / j["id"] / f"round-{j['round']}"
+        missing = [r for r in j["agents"]["reviewers"] if not (rd / f"review-{r}.md").exists()]
+        if not missing:
+            return self.reviewed(j["id"])
+        say(f"{j['id']}: reviewing ({', '.join(missing)})")
+        for r, model in j["agents"]["reviewers"].items():
+            if r not in missing:
+                continue
+            name = f"reviewer-{r}"
+            prompt = f"{header(j)} Review round {j['round']}."
+            if name in OFFSET:
+                prompt += f" Port: {port(j, name)}."
+            self.spawn(Agent(j["id"], name, rd / f"review-{r}.md", prompt, model=model))
+
+    def spawn_approver(self, j):
+        prompt = f"{header(j)} Final round: {j['round']}. Port: {port(j, 'approver')}."
+        self.spawn(Agent(j["id"], "approver", JOBS / j["id"] / "decision.md", prompt))
+
+    # ---- stages: taking a finished agent forward -------------------------------
+
+    def finished(self, a):
+        j = load(a.job_id)
+        if a.name.startswith("reviewer-"):
+            job("sync", a.job_id)
+        if not has_file(j, a):
+            if not a.retried:
+                say(f"{a.job_id}: {a.label()} finished without {a.file.name}; resuming it once")
+                missing = f"Your file {a.file} does not exist. Write it now, then reply with its first line."
+                session = self.session(a)
+                # With its session, the agent keeps what it did; without one, it starts over with the same prompt.
+                prompt = f"{header(j)} {missing}" if session else f"{a.prompt} {missing}"
+                again = Agent(a.job_id, a.name, a.file, prompt, a.model)
+                again.retried = True
+                self.spawn(again, resume=session)
+                return
+            raise Refused(f"{a.label()} finished twice without writing {a.file.relative_to(REPO).as_posix()}.")
+        if self.agents.get(a.job_id):
+            return  # WAIT FOR ALL: other reviewers of this job are still running
+        if j["stage"] == "intake":
+            self.intake_done(j)
+        elif j["stage"] == "spec":
+            self.advance(a.job_id, "build")
+            self.start(a.job_id)
+        elif j["stage"] == "build":
+            self.build_done(j, a)
+        elif j["stage"] == "review":
+            self.reviewed(a.job_id)
+        elif j["stage"] == "approve":
+            self.decided(j)
+
+    def intake_done(self, j):
+        line = first_line(JOBS / j["id"] / "intake.md") or ""
+        decision = line.partition(":")[2].strip()
+        if decision == "ACCEPT":
+            res = subprocess.run(portable.script(BIN / "route", j["id"]), cwd=REPO, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise Refused(f"route failed: {(res.stderr or res.stdout).strip()}")
+            self.advance(j["id"], "spec")
+            self.start(j["id"])
+        elif decision == "NEEDS-INFO":
+            self.advance(j["id"], "needs-info")
+        elif decision == "REJECT":
+            self.advance(j["id"], "rejected")
+        else:
+            raise Refused(f"intake.md starts with {line!r}, not DECISION: ACCEPT, NEEDS-INFO or REJECT.")
+
+    def build_done(self, j, a):
+        status = first_line(JOBS / j["id"] / "build.md")
+        if status == "STATUS: BLOCKED":
+            self.advance(j["id"], "needs-human")
+            return
+        if status != "STATUS: READY":
+            raise Refused(f"build.md starts with {status!r}, not STATUS: READY or STATUS: BLOCKED.")
+        try:
+            self.advance(j["id"], "gate")
+        except Refused as e:
+            if a.refused or "max_cost_usd" in str(e):
+                raise  # no agent can bring a cost down: park it, as SKILL.md says
+            say(f"{j['id']}: job advance refused the build: {e}; resuming the builder once")
+            prompt = (f"{header(j)} Build round {j['round']}. Port: {port(j, 'builder')}. "
+                      f"factory/bin/job refused your build: {e} Fix that, push, and update build.md.")
+            again = Agent(j["id"], "builder", a.file, prompt)
+            again.refused = True
+            self.spawn(again)
+            return
+        self.gate(j["id"])
+
+    def gate(self, job_id):
+        res = subprocess.run(portable.script(BIN / "gate", job_id), cwd=REPO, capture_output=True, text=True)
+        verdict = next((x.split(" (")[0] for x in res.stdout.splitlines() if x.startswith("GATE:")), "")
+        if res.returncode == 0 and verdict == "GATE: PASS":
+            say(f"{job_id}: gate PASS")
+            j = self.advance(job_id, "review")
+            self.spawn_reviewers(j)
+        elif res.returncode == 1 and verdict == "GATE: FAIL":
+            say(f"{job_id}: gate FAIL")
+            j = load(job_id)
+            if j["round"] >= j["round_limit"]:
+                self.advance(job_id, "needs-human")
+                return
+            j = self.advance(job_id, "build")
+            self.spawn_builder(j, f"The gate failed: read round-{j['round'] - 1}/checks.md and checks.log, "
+                                  "fix it, push, and update build.md.")
+        else:
+            raise Refused(f"the gate did not run: {(res.stderr or res.stdout).strip()}")
+
+    def reviewed(self, job_id):
+        j = load(job_id)
+        rd = JOBS / job_id / f"round-{j['round']}"
+        verdicts = {r: first_line(rd / f"review-{r}.md") for r in j["agents"]["reviewers"]}
+        changes = [r for r, v in verdicts.items() if v and re.fullmatch(r"VERDICT:\s*CHANGES", v)]
+        say(f"{job_id}: reviews " + ", ".join(f"{r} {(v or 'missing').removeprefix('VERDICT:').strip()}"
+                                              for r, v in verdicts.items()))
+        if not changes:
+            j = self.advance(job_id, "approve")  # refuses an invalid verdict; that parks the job
+            self.spawn_approver(j)
+        elif j["round"] >= j["round_limit"]:
+            self.advance(job_id, "needs-human")
+        else:
+            j = self.advance(job_id, "build")
+            self.spawn_builder(j, f"Round {j['round'] - 1} reviews are in round-{j['round'] - 1}/. Address every "
+                                  f"VERDICT: CHANGES, push, and update build.md for round {j['round']}.")
+
+    def decided(self, j):
+        line = first_line(JOBS / j["id"] / "decision.md")
+        if line == "APPROVE":
+            self.merge(j["id"])
+        elif line == "ESCALATE":
+            self.advance(j["id"], "needs-human")
+        else:
+            raise Refused(f"decision.md starts with {line!r}, not APPROVE or ESCALATE.")
+
+    def merge(self, job_id):
+        out = job("merge", job_id).stdout.strip()
+        say(out.splitlines()[-1] if out else f"{job_id}: merge")
+
+
+def has_file(j, a):
+    """Is the agent's file there, and, for the builder, written in this round?"""
+    if not a.file.exists():
+        return False
+    if a.name == "builder":
+        return a.file.stat().st_mtime >= j.get("round_started", 0) - 1
+    return True
+
+
+def latest_feedback(d):
+    found = sorted(d.glob("feedback-*.md"), key=lambda p: int(re.sub(r"\D", "", p.stem) or 0))
+    return found[-1] if found else None
+
+
+def feedback_note(j, own):
+    """A job sent back to intake or spec after feedback: that agent reads it first."""
+    fb = latest_feedback(JOBS / j["id"])
+    if fb and (not own.exists() or fb.stat().st_mtime > own.stat().st_mtime):
+        return f" Read {fb.name} first."
+    return ""
+
+
+def build_purpose(j, resumed):
+    """What this build round is for, from the job's files, as SKILL.md words it."""
+    d, n = JOBS / j["id"], j["round"]
+    fb = latest_feedback(d)
+    if fb and fb.stat().st_mtime >= j.get("round_started", 0) - 1:
+        purpose = f"The user gave feedback: read {fb.name} and address it, push, and update build.md for round {n}."
+    elif n <= 1:
+        purpose = "This is the first round: implement spec.md."
+    elif (first_line(d / f"round-{n - 1}" / "checks.md") or "").endswith("FAIL"):
+        purpose = f"The gate failed: read round-{n - 1}/checks.md and checks.log, fix it, push, and update build.md."
+    else:
+        purpose = (f"Round {n - 1} reviews are in round-{n - 1}/. Address every VERDICT: CHANGES, push, "
+                   f"and update build.md for round {n}.")
+    if resumed:
+        purpose = ("You are resuming this round after the factory stopped: read build.md and git log to see how "
+                   "far the last builder got, then finish it. " + purpose)
+    return purpose
+
+
+def preflight():
+    """Refuse to start agents whose guard doesn't block what it should."""
+    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "factory/bin/job advance x merging"}})
+    res = subprocess.run(portable.script(BIN / "guard", "builder"), cwd=REPO, input=event,
+                         capture_output=True, text=True)
+    if res.returncode != 2:
+        die(f"factory/bin/guard did not block a test call (exit {res.returncode}): {res.stderr.strip()}. "
+            "No agent starts without it")
+
+
+def main(argv):
+    if argv and argv[0] in {"-h", "--help"}:
+        print(__doc__.strip())
+        return 0
+    if len(argv) > 1:
+        die("usage: drive [<issue>]")
+    preflight()
+    driver = Driver(only=argv[0] if argv else None)
+
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, stop)
+    try:
+        driver.run()
+    except KeyboardInterrupt:
+        say("drive: stopped. Every job keeps its state; `drive` again resumes them.")
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

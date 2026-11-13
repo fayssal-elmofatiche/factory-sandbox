@@ -144,6 +144,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx demo [run]` | Replays a saved run on the dashboard; no agent runs and it costs nothing |
 | `./fx run [issue]` | Opens Claude Code on `/factory run` |
 | `./fx sweep <kind>` | Opens Claude Code on `/factory sweep`: proposes `perf`, `security`, `cleanup` or `docs` work as unlabelled issues |
+| `./fx drive [issue]` | Runs the same steps with a script instead of a Claude Code session (see below) |
 | `./fx issues` | Lists the issues |
 | `./fx new "<title>"` | Files a new issue and queues it; you write the request |
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
@@ -168,6 +169,17 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 The factory itself runs inside a Claude Code session that you watch. `./fx run`
 opens that session and types the command; it does not run the factory
 unattended.
+
+`./fx drive` (`factory/bin/drive`) takes the same steps with no orchestrating
+session. A script reads `factory/bin/job queue`, starts each agent as its own
+headless `claude -p --agent <name>` process, reads the first line of the file
+the agent writes and makes the next `factory/bin/job` call, until nothing more
+can run. Killed, it resumes from the job files on the next run. Claude Code skips
+the hooks in project agents under `claude -p` unless the folder is trusted, so
+the driver passes the guard on each agent's command line as well. The agents
+then run unattended on this machine's credentials: do that in a container,
+with an API key that has a spending limit and `max_cost_usd` set.
+`/factory <anything>` stays a conversation with a Claude Code session.
 
 ### Trying a different setup
 
