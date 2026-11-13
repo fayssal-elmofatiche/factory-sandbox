@@ -1031,6 +1031,10 @@ def add_acceptance_to_suite(job):
     target.parent.mkdir(exist_ok=True)
     target.write_bytes(tests)
     git(job, "add", rel)
+    # The bytes can differ only in line endings (CRLF from the job folder on Windows, LF in the
+    # checkout): git then stages nothing, and the tests are already on the branch.
+    if git(job, "diff", "--cached", "--quiet", "--", rel, check=False).returncode == 0:
+        return
     git(job, "commit", "-q", "-m", f"Acceptance tests for {job['id']} (issue {job['issue']})")
 
 
