@@ -96,9 +96,9 @@ command you ran and its result, or what the page showed.
   anything: fetch the page with `curl -s http://127.0.0.1:<port>/` and judge the HTML, and say in
   your file that you checked the markup, not a rendered page. Where `lsof` is missing, use
   `ss -ltnp` or `fuser <port>/tcp` to find the server's PID. On Windows (Git Bash),
-`netstat -ano -p tcp | grep -E "127.0.0.1:<port> +0.0.0.0:0"` gives the PID in its last column
-(don't grep for LISTENING: Windows translates it) and `taskkill //PID <pid> //T //F` stops it.
-Run the netstat line again afterwards: it must print nothing.
+  `netstat -ano -p tcp | grep -E "127.0.0.1:<port> +0.0.0.0:0"` gives the PID in its last column
+  (don't grep for LISTENING: Windows translates it) and `taskkill //PID <pid> //T //F` stops it.
+  Run the netstat line again afterwards: it must print nothing.
 
 ## Commit and push
 
