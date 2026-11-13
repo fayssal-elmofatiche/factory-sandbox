@@ -126,6 +126,8 @@ dt { color: var(--muted); } dd { margin: 0; }
 .readout.warn { border-color: var(--warn); }
 pre { font-family: var(--code); font-size: .8rem; line-height: 1.5; margin: 0; padding: 1em 1.2em; border-radius: 4px; background: var(--ink); color: var(--board); white-space: pre-wrap; overflow-wrap: anywhere; }
 :root[data-theme="dark"] pre { background: #0b1114; color: var(--ink); }
+/* Commands are read line by line: never break one, scroll sideways if it must. */
+pre.cmds { white-space: pre; overflow-wrap: normal; overflow-x: auto; font-size: .64rem; }
 .doc { display: grid; grid-template-columns: 1fr 1.25fr; gap: 1.8rem; align-items: start; }
 .doc pre { height: 15.5em; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--dead) transparent; }
 .figs { display: flex; flex-wrap: wrap; gap: 1.1rem 2.6rem; margin: .5rem 0 1rem; }
@@ -521,7 +523,7 @@ const MOVES = {
 }
 const STAGES = ['intake', 'needs-info', 'spec', 'build', 'gate', 'review', 'approve', 'merging', 'needs-human', 'rejected', 'merged']
 const ALARM_TEXT = [
-  ['The issue is unclear', 'Intake posts its question on the issue and waits. Answer it, and the job resumes.'],
+  ['The issue is unclear', 'Intake posts its question on the issue and waits. Write your answer under the question in the issue file, and the next run resumes the job.'],
   ['The request does not belong', 'Intake rejects it and says why. Nothing is built.'],
   ['The builder is blocked', 'It writes down what it needs and stops.'],
   ['Three rounds were not enough', 'Build, gate and review may repeat three times. After the third round a person decides.'],
@@ -644,7 +646,10 @@ const SLIDES = [
       return `<h2>One command drives it: fx</h2><div class="trio">
       <div><p class="field">Get ready</p>
         ${row('./fx doctor', 'checks that this machine can run the factory')}
-        ${row('./fx up', 'starts the dashboard and opens it')}</div>
+        ${row('./fx up', 'starts the dashboard and opens it')}
+        <p class="field" style="margin-top:1em">When a job waits for you</p>
+        ${row('./fx show 1', 'the decision, the change and what you can do')}
+        ${row('./fx approve 1', 'or <code>feedback 1</code> or <code>reject 1</code>, followed by your words')}</div>
       <div><p class="field">Run</p>
         ${row('./fx queue 2', 'queues request 2 for the next run')}
         ${row('./fx run', 'opens Claude Code and types <code>/factory run</code>')}
@@ -667,12 +672,12 @@ const SLIDES = [
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
 
   { name: 'Try it', side: 'left', frame: [3100, 1250, 6800],
-    html: () => `<h2>Run it on your own machine</h2><pre>git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
+    html: () => `<h2>Run it on your own machine</h2><pre class="cmds">git clone https://github.com/fayssal-elmofatiche/factory-sandbox.git
 cd factory-sandbox
 ./fx doctor     # is this machine ready?
 ./fx deck       # this presentation
 ./fx up         # the dashboard
-./fx run        # sets it up the first time, then Claude Code on /factory run</pre>
+./fx run        # sets it up, then starts the factory</pre>
       <p style="margin-top:.9em">Six issues are waiting. Some should merge, some should be escalated to you, one needs an answer from you first, and one should be rejected. Guess which before you run them.</p>
       <p class="dim small">macOS, Linux, or Windows (natively with <code>.\\fx.cmd</code>, or in WSL). The factory is <a href="https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2">ZazenCodes' Software Factory v2</a>, GPLv3. This repository adapts it and runs it entirely on your machine.</p>`,
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
