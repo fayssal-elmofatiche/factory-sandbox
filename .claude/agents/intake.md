@@ -54,11 +54,12 @@ dayahead is a small day-ahead power auction: bids and offers per delivery hour, 
 For ACCEPT, rate:
 
 - **Risk**: `low` (contained change, easy to verify, nothing sensitive),
-  `medium` (several files or behaviours, or shared code), `high` (data,
-  money, auth, migrations, concurrency, or anything hard to undo).
+  `medium` (several files or behaviours, or shared code), `high` (how the
+  auction clears or fills orders, who can see or change orders, concurrency,
+  or anything hard to undo).
 - **Surfaces**: `ui` if a user will see the change on a page or screen,
-  `security` if it touches auth, permissions, user input reaching queries,
-  shells or HTML, secrets, or payments. Both, or `none`.
+  `security` if it adds an endpoint, puts user input into HTML, a file or a
+  shell command, or reads or shows per-participant data. Both, or `none`.
 
 ## Write intake.md
 

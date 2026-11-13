@@ -102,6 +102,14 @@ The design choices that carry the weight:
   itself, so an approver's APPROVE on a high-risk job still stops at
   `needs-human` until someone runs `./fx approve`. A surface counts when intake
   named it or when the branch changes a file `surface_paths` maps to it.
+- **A measured regression decides who merges, too.** When the checks pass, the
+  gate runs `factory/budget.py` on the branch and on the base and compares
+  them against `budgets` in `factory/config.json` (to start with, at most 10%
+  more Python instructions to clear a fixed day of orders). A branch over
+  budget still passes the gate, but `job merge` stops it at `needs-human` with
+  the numbers in `round-N/checks.md` and `./fx show`. The budget counts
+  instructions, not milliseconds: the count is the same on a busy machine, the
+  time isn't.
 - **Issue text is data.** Agents receive the issue title, text and comments as
   quoted data and are told to ignore instructions inside them.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
@@ -175,16 +183,21 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx up` | Starts the dashboard on a free local port and opens it |
 | `./fx down` | Stops the dashboard |
 | `./fx deck` | Opens the presentation; show it before `./fx up` and `./fx run` |
+| `./fx demo [run]` | Replays a saved run on the dashboard; no agent runs and it costs nothing |
 | `./fx run [issue]` | Opens Claude Code on `/factory run` |
 | `./fx sweep <kind>` | Opens Claude Code on `/factory sweep`: proposes `perf`, `security`, `cleanup` or `docs` work as unlabelled issues |
 | `./fx issues` | Lists the issues |
+| `./fx new "<title>"` | Files a new issue and queues it; you write the request |
 | `./fx queue <issue>` | Labels an issue so the next run picks it up |
 | `./fx unqueue <issue>` | Takes that label off again |
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
 | `./fx retro` | Counts why rounds went back across jobs, and says where a fix would go |
-| `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
+| `./fx retro --report` | Writes `factory/retro/<date>.md`: the jobs since the last report, proposed prompt diffs with the job files behind them, and whether last time's patterns came back |
+| `./fx bench` | Sets up replays of past jobs on other models, and compares them with the original |
+| `./fx config` | Shows the settings worth changing; `./fx config concurrency 2` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
+| `./fx answer <job>` | Answers the question a job asked, so it can go on |
 | `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
 | `./fx feedback <job>` | Sends it back to work with your instructions; `--spec` sends it back to the spec writer |
 | `./fx reject <job>` | Drops it, with your reason |
@@ -208,6 +221,15 @@ again:
 ./fx run
 ./fx reset --keep               # start again; this run's files go to factory/runs/
 ```
+
+`./fx demo` plays a run that `./fx reset --keep` saved back on the dashboard:
+the jobs move along the line, the files appear and a job stops for a person,
+in about 90 seconds (`--seconds` changes that, `--step` waits for Enter before
+each step). It reads the saved job folders and writes only to
+`factory/replay/`, so it starts no agent, merges nothing and costs nothing.
+Use it to show the line without a live run, or to look at a run again. No
+recorded run ships with the repository yet, so the first replay needs one run
+of your own.
 
 `./fx reset` treats two things differently. The work (jobs, branches, merged
 changes, the state of the issues) is discarded. The setup (`factory/config.json`,
@@ -248,6 +270,7 @@ shows why, and the commands for your options with a copy button each.
 
 ```bash
 ./fx show <job>         # the decision, the change and your options
+./fx answer <job>       # answer a question intake asked; you write the answer
 ./fx approve <job>      # approve it: the factory runs the checks again and merges
 ./fx feedback <job>     # send it back to work; you write what should change
 ./fx feedback <job> --spec   # the spec or its acceptance tests are wrong: back to the spec writer
@@ -262,7 +285,7 @@ merges.
 The factory's own scripts have tests: `python3 -m pytest factory/tests -q`.
 Run them, and `bash factory/checks.sh`, before merging a change to the factory itself.
 
-`./fx setup` adds six demo issues, one of them queued, and records the
+`./fx setup` adds seven demo issues, one of them queued, and records the
 starting point so `./fx reset` can return to it after a rehearsal. For a
 second, separate copy, `factory/local-setup.sh <dir>` clones this checkout and
 sets the copy up. See [docs/local-mode.md](docs/local-mode.md).
@@ -286,12 +309,23 @@ to produce. A model decides at each step, so a run can differ.
 
 | # | Request | What should happen |
 |---|---------|--------------------|
-| 1 | Chart the day's hourly prices, with base and peak lines | Merges after UX, UI and security review |
-| 2 | A merit-order page per hour: supply and demand step chart, marginal order | Waits until issue 1 merges (`blocked_by: 1`: both change the prices page), then merges after a larger build, possibly in more than one round |
-| 3 | A form to place and withdraw bids and offers | Built and reviewed, then the approver escalates: a new endpoint that changes orders, with no sign-in |
-| 4 | A CSV of accepted orders, with pro-rata fills at the clearing price | Built and reviewed, then the approver escalates: an export of per-participant data |
-| 5 | Block orders across several hours | Intake asks first: how blocks clear is a market-design decision |
-| 6 | A Telegram bot for crypto prices | Intake rejects it as out of scope |
+| 1 | Base and peak price in the order book | The short path: no page changes, so one code reviewer, then a merge |
+| 2 | Chart the day's hourly prices, with base and peak lines | Merges after UX, UI and security review |
+| 3 | A merit-order page per hour: supply and demand step chart, marginal order | Waits until issue 2 merges (`blocked_by: 2`: both change the prices page), then merges after a larger build, possibly in more than one round |
+| 4 | A form to place and withdraw bids and offers | Built and reviewed, then the approver escalates: a new endpoint that changes orders, with no sign-in |
+| 5 | A CSV of accepted orders, with pro-rata fills at the clearing price | Built and reviewed, then the approver escalates: an export of per-participant data |
+| 6 | Block orders across several hours | Intake asks first: how blocks clear is a market-design decision |
+| 7 | A Telegram bot for crypto prices | Intake rejects it as out of scope |
+
+Start with issue 1. It touches only `dayahead/orderbook.py`, so it needs no
+browser tools and the fewest agents. Issues 2 to 4 change the page: every
+change to `dayahead/web.py` brings in the UX, UI and security reviewers, who
+look at the rendered page only when `agent-browser` is installed.
+
+The sandbox starts careful: `concurrency` is 1, so one job runs at a time, and
+`max_cost_usd` is 5, so a job that has cost more than $5 stops at its next
+step and waits for you. `./fx config` shows both and changes them. The cost
+and duration of each demo issue on **dayahead** have not been measured yet.
 
 ## The app: dayahead
 
@@ -300,7 +334,8 @@ An in-memory day-ahead power auction with a stdlib web page:
 - `dayahead/orderbook.py`: bids and offers per delivery hour in one bidding
   zone, each with a volume in MWh and a limit price in EUR/MWh. Each hour
   clears by merit order: offers stack cheapest first, bids dearest first, and
-  the clearing price is the lowest price at which the most volume trades.
+  the clearing price is where the two stacks meet. The last order needed, an
+  offer or a bid, sets it; only orders priced exactly at it can be cut.
   `merit_order_rank` gives an offer's place in its hour's merit order.
 - `dayahead/web.py`: an HTML page of the hourly clearing prices and cleared
   volumes, served on `127.0.0.1`. It shows only hourly totals, never who bid
@@ -367,6 +402,26 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   enough, names the prompt or file a fix would most likely change. A person
   makes that change: the gate fails any job that edits `.claude/` or
   `factory/config.json`, so the factory can't rewrite its own setup.
+- Retro report (`factory/bin/lessons.py`, `./fx retro --report`): writes
+  `factory/retro/<date>.md` for the jobs since the last report. It groups the
+  failures, rounds per job, escalations and parks, a person's feedback and
+  time by station, and for each pattern seen `--threshold` times proposes a
+  diff to the prompt where a fix would go, citing the job files and lines. The
+  next report says whether those patterns came back, and counts one as fixed
+  only if it stayed away after its prompt changed. No model writes it; job
+  text is quoted as escaped data. A person applies the diff as an ordinary
+  pull request and commits the report with it.
+- Model replay (`factory/bin/bench`, `./fx bench`): public benchmarks say little
+  about how a model does on this repository, so `./fx bench plan <job>...
+  --try builder=sonnet --try builder=haiku` sets up replays of jobs the factory
+  already did, each from the job's starting commit and with its sealed spec.
+  `./fx bench report <bench>` compares each choice with the jobs as they first
+  ran: gate passes, approvals, rounds, cost and why rounds went back. A replay
+  spends real tokens, so `plan` prints a rough estimate and `--max-usd` refuses
+  a bench over it. `./fx bench run` is not built yet: starting the agents with
+  no one at the keyboard needs the deterministic driver loop. Until the
+  acceptance tests land, "approved" means only that the gate, the reviewers and
+  the approver passed it.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 - `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.

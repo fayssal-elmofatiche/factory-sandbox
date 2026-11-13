@@ -865,10 +865,32 @@ def route_by_diff(job):
     return added
 
 
+def over_budget(job, name="checks.md"):
+    """Why the performance budget keeps this job from merging on its own: the
+    gate wrote BUDGET: OVER or UNMEASURED into round-N/<name>, with the numbers
+    from factory/budget.py. Empty when the branch is within budget."""
+    path = round_dir(job) / name
+    if not path.exists():
+        return []
+    status = header(path).get("BUDGET", "")
+    if status not in {"OVER", "UNMEASURED"}:
+        return []
+    body = section(path, "Budget") or ""
+    rows = [[c.strip() for c in line.strip("|").split("|")] for line in body.splitlines()
+            if line.startswith("|") and line.rstrip().endswith("| OVER |")]
+    numbers = ", ".join(f"{r[0]} {r[1]} -> {r[2]} ({r[3]}, limit {r[4]})" for r in rows)
+    if status == "OVER":
+        return [f"factory/budget.py measured a regression over budget: {numbers} "
+                f"(round-{job['round']}/{name})"]
+    first = body.splitlines()[0] if body else ""
+    return [f"factory/budget.py could not measure the branch: {first.partition('(')[2].rstrip(')') or 'see ' + name}"]
+
+
 def needs_person(job):
-    """Why `human_merge` in config.json keeps this job from merging on its own:
-    the risk intake gave it, a surface intake named, or a file the branch changes
-    that `surface_paths` maps to one of the listed surfaces. Empty when nothing
+    """Why this job may not merge on its own: `human_merge` in config.json (the
+    risk intake gave it, a surface intake named, or a file the branch changes
+    that `surface_paths` maps to one of the listed surfaces), or a performance
+    budget the gate measured it over (over_budget()). Empty when nothing
     matches. A script decides this, not the approver's judgement."""
     rule = CONFIG.get("human_merge") or {}
     risks, wanted = set(rule.get("risk", [])), set(rule.get("surfaces", []))
@@ -882,6 +904,7 @@ def needs_person(job):
             for pattern, surfaces in CONFIG.get("surface_paths", {}).items():
                 if fnmatch.fnmatch(path, pattern):
                     why += [f"it changes {path} (surface {s})" for s in surfaces if s in wanted]
+    why += over_budget(job)
     return list(dict.fromkeys(why))
 
 
@@ -1316,11 +1339,12 @@ def cmd_queue():
             if replied_since_question(TRACKER.get(n)):
                 replied_rows.append(("resume", n, j["id"], j["stage"], "author replied"))
             else:
-                other_rows.append(("wait", n, j["id"], j["stage"], "waiting for the author"))
+                other_rows.append(("wait", n, j["id"], j["stage"],
+                                   f"waiting for the author: answer with `./fx answer {j['id']}`"))
         elif j["stage"] == "needs-human":
             where = HOST.where(j)
-            hint = (f"merge failed: retry with `job merge {j['id']}`, or give feedback" if j.get("merge_failed")
-                    else f"approve with `job approve {j['id']}`, or give feedback" if j.get("gated_sha")
+            hint = (f"merge failed: retry with `./fx retry {j['id']}`, or give feedback" if j.get("merge_failed")
+                    else f"approve with `./fx approve {j['id']}`, or give feedback" if j.get("gated_sha")
                     else f"merge {where} and push, or give feedback" if where
                     else "give feedback")
             other_rows.append(("wait", n, j["id"], j["stage"], hint))
@@ -1398,7 +1422,7 @@ def cmd_merge(job):
     if not job.get("human_approved"):
         why = needs_person(job)
         if why:
-            return fail(f"Approved and gated, but `human_merge` in config.json says a person merges this job: "
+            return fail(f"Approved and gated, but config.json (`human_merge`, `budgets`) says a person merges this job: "
                         f"{'; '.join(why)}. To merge it, run `./fx approve {job['id']}` "
                         f"(or `factory/bin/job approve {job['id']}`): the factory syncs with {BASE}, "
                         f"adds the job's acceptance tests as {acceptance.kept_path(job['id'])}, "
@@ -1418,6 +1442,10 @@ def cmd_merge(job):
         if gate.returncode != 0:
             return fail(f"The gate failed after syncing with {BASE}. "
                         f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}", retry=False)
+        over = [] if job.get("human_approved") else over_budget(job, "merge-checks.md")
+        if over:
+            return fail(f"Synced with {BASE} and gated, but the budget now holds it for a person: "
+                        f"{'; '.join(over)}. To merge it, run `./fx approve {job['id']}`.", retry=False)
         try:
             git(job, "push", "origin", job["branch"])
             if not CONFIG.get("auto_merge", True) and not job.get("human_approved"):
@@ -1473,7 +1501,7 @@ def cmd_park(job, text):
     was = job["stage"]
     escalate(job, f"Parked by @{operator()} while the job was in {was}:\n\n{text.strip()}")
     save(advance(sync(job), "needs-human", park=True))
-    print(f"{job['id']}: parked from {was}; `job feedback` resumes it, `job reject` drops it")
+    print(f"{job['id']}: parked from {was}; `./fx feedback` resumes it, `./fx reject` drops it")
 
 
 def cmd_mark_merged(job, sha):
@@ -1508,29 +1536,37 @@ def cmd_show(job):
                 text = section(d / name, part)
                 if text:
                     print(f"  {part}:\n" + "\n".join("    " + line for line in text.splitlines()))
+    for name in ("merge-checks.md", "checks.md"):
+        budget = section(round_dir(job) / name, "Budget") if job["round"] and (round_dir(job) / name).exists() else None
+        if budget:
+            print(f"\nbudget (round-{job['round']}/{name}):\n" + "\n".join("  " + line for line in budget.splitlines()))
+            break
     if job["round"] and run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{job['branch']}"],
                             check=False).returncode == 0:
         run(["git", "fetch", "origin", BASE], check=False)
         stat = run(["git", "diff", "--stat", f"origin/{BASE}...{job['branch']}"], check=False).stdout.rstrip()
         print(f"\nchange (git diff origin/{BASE}...{job['branch']}):\n{stat or '  no changes'}")
-    print("\nnext:")
+    # What a person types. `fx` wraps the same `job` commands and takes the
+    # words on the command line, from a pipe or from an editor.
+    print("\nnext (in PowerShell, .\\fx.cmd instead of ./fx):")
     if job["stage"] == "needs-human":
         if job.get("merge_failed"):
-            print(f"  factory/bin/job merge {job['id']}        retry the merge")
+            print(f"  ./fx retry {job['id']}        retry the merge")
         elif job.get("gated_sha") and head_of(job) in {job["gated_sha"], job.get("synced_sha")}:
-            print(f"  factory/bin/job approve {job['id']}      approve it: the factory gates again and merges")
+            print(f"  ./fx approve {job['id']}      approve it: the factory gates again and merges")
         else:
             print("  (it can't be approved as it is: no commit at its tip has passed the gate)")
-        print(f"  factory/bin/job feedback {job['id']}     send it back to work, your words on stdin")
-        print(f"  factory/bin/job feedback {job['id']} --spec   the spec or its acceptance tests are wrong: back to the spec writer")
-        print(f"  factory/bin/job reject {job['id']}       drop it, your reason on stdin")
+        print(f"  ./fx feedback {job['id']} <what should change>     send it back to work")
+        print(f"  ./fx feedback {job['id']} --spec <what is wrong>   the spec or its acceptance tests are wrong: "
+              "back to the spec writer")
+        print(f"  ./fx reject {job['id']} <why>       drop it")
     elif job["stage"] == "needs-info":
-        print(f"  factory/bin/job answer {job['id']}       answer the question, your words on stdin")
-        print(f"  factory/bin/job reject {job['id']}       drop it, your reason on stdin")
+        print(f"  ./fx answer {job['id']} <your answer>       answer the question, then ./fx run")
+        print(f"  ./fx reject {job['id']} <why>       drop it")
     elif job["stage"] in TERMINAL:
         print("  nothing: the job is finished")
     else:
-        print(f"  /factory run resumes it; `factory/bin/job park {job['id']}` stops it")
+        print(f"  ./fx run resumes it; `./fx park {job['id']} <why>` stops it")
 
 
 def cmd_answer(job, text):

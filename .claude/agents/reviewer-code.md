@@ -49,7 +49,7 @@ rewrites files, such as `--fix`.
 ## What to look for
 
 - **Correctness**: it does what the spec's requirements say. Look for edge
-  cases, missing awaits, unhandled errors, and off-by-one or wrong-path bugs.
+  cases, unhandled errors, and off-by-one or wrong-path bugs.
 - **Simplicity**: it is the smallest change that fully meets the spec, with no
   speculative options, fallbacks, hidden defaults or swallowed errors.
 - **Reuse**: it uses existing helpers, components and patterns instead of

@@ -64,14 +64,13 @@ APPROVE only if all of these hold:
 
 ESCALATE if any of them fails, or if the change:
 
-- touches money, access or identity: payments, auth, permissions, or database
-  and storage security rules;
+- adds or changes sign-in, permissions or any other access control;
 - changes deploy, CI or hosting config, or changes `AGENTS.md` beyond describing
   what this job built (a new file, page or command the spec asked to document
   is fine; a changed rule, convention or instruction for agents is not);
 - removes or weakens an existing test;
-- migrates a database schema, sends email, writes production data, or adds a
-  dependency;
+- adds a dependency (the app is standard library only), or makes the server
+  reachable from outside this machine;
 - shows which participant placed which order anywhere, adds an export of
   per-participant order data, or adds an endpoint that places or changes orders;
 - rests on a spec Assumption that is really a market-design or business decision,
