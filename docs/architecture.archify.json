@@ -1,0 +1,494 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "factory-sandbox: how the software factory is built",
+    "output": "docs/architecture.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "repository": {
+      "url": "https://github.com/fayssal-elmofatiche/factory-sandbox.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "aa3a572209522eca0576b7420a39bfb27d019f13"
+    }
+  },
+  "components": [
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "You",
+      "sublabel": "the operator",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "fx",
+          "line": 589,
+          "end_line": 598,
+          "label": "your words go to job"
+        }
+      ]
+    },
+    {
+      "id": "fx",
+      "type": "frontend",
+      "label": "fx",
+      "sublabel": "the one command",
+      "pos": [
+        295,
+        200
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "fx",
+          "line": 301,
+          "end_line": 311,
+          "label": "fx run opens Claude Code"
+        },
+        {
+          "path": "fx",
+          "line": 314,
+          "end_line": 328,
+          "label": "fx drive runs the driver"
+        },
+        {
+          "path": "fx",
+          "line": 589,
+          "end_line": 598,
+          "label": "decisions call job"
+        }
+      ]
+    },
+    {
+      "id": "orchestrator",
+      "type": "backend",
+      "label": "Orchestrator",
+      "sublabel": "session or fx drive",
+      "pos": [
+        550,
+        200
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": ".claude/skills/factory/SKILL.md",
+          "line": 88,
+          "end_line": 120,
+          "label": "spawning agents"
+        },
+        {
+          "path": ".claude/skills/factory/SKILL.md",
+          "line": 122,
+          "end_line": 217,
+          "label": "advancing a job"
+        },
+        {
+          "path": "factory/bin/drive",
+          "line": 1,
+          "end_line": 42,
+          "label": "the same steps as a script"
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "type": "backend",
+      "label": "Station agents",
+      "sublabel": "intake to approver",
+      "pos": [
+        805,
+        200
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "tag": "8 roles",
+      "sources": [
+        {
+          "path": ".claude/skills/factory/SKILL.md",
+          "line": 28,
+          "end_line": 40,
+          "label": "the pipeline"
+        },
+        {
+          "path": ".claude/agents/builder.md",
+          "line": 1,
+          "end_line": 16,
+          "label": "agent frontmatter and hooks"
+        },
+        {
+          "path": "factory/bin/drive",
+          "line": 149,
+          "end_line": 165,
+          "label": "claude -p --agent"
+        }
+      ]
+    },
+    {
+      "id": "guard",
+      "type": "security",
+      "label": "guard hook",
+      "sublabel": "PreToolUse, per role",
+      "pos": [
+        805,
+        40
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/bin/guard",
+          "line": 38,
+          "end_line": 47,
+          "label": "each role's own file"
+        },
+        {
+          "path": "factory/bin/guard",
+          "line": 52,
+          "end_line": 63,
+          "label": "blocked shell commands"
+        },
+        {
+          "path": "factory/bin/guard",
+          "line": 77,
+          "end_line": 112,
+          "label": "allow or exit 2"
+        }
+      ]
+    },
+    {
+      "id": "worktrees",
+      "type": "database",
+      "label": ".worktrees/<job>",
+      "sublabel": "one git worktree a job",
+      "pos": [
+        1060,
+        200
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/bin/job",
+          "line": 938,
+          "end_line": 956,
+          "label": "ensure_worktree"
+        },
+        {
+          "path": ".claude/agents/builder.md",
+          "line": 115,
+          "end_line": 123,
+          "label": "builder commits, pushes"
+        }
+      ]
+    },
+    {
+      "id": "origin",
+      "type": "database",
+      "label": "origin.git",
+      "sublabel": "bare repo on disk",
+      "pos": [
+        1060,
+        40
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/bin/job",
+          "line": 394,
+          "end_line": 444,
+          "label": "LocalHost merges, pushes main"
+        },
+        {
+          "path": "fx",
+          "line": 692,
+          "end_line": 700,
+          "label": "fx setup creates it"
+        }
+      ]
+    },
+    {
+      "id": "job",
+      "type": "backend",
+      "label": "factory/bin/job",
+      "sublabel": "the state machine",
+      "pos": [
+        550,
+        360
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "tag": "refuses illegal moves",
+      "sources": [
+        {
+          "path": "factory/bin/job",
+          "line": 75,
+          "end_line": 85,
+          "label": "TRANSITIONS"
+        },
+        {
+          "path": "factory/bin/job",
+          "line": 1061,
+          "end_line": 1278,
+          "label": "advance checks the files"
+        },
+        {
+          "path": "factory/bin/job",
+          "line": 1398,
+          "end_line": 1471,
+          "label": "merge: sync, gate, push"
+        }
+      ]
+    },
+    {
+      "id": "jobfolder",
+      "type": "database",
+      "label": "factory/jobs/<id>",
+      "sublabel": "job.json, agent files",
+      "pos": [
+        805,
+        360
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/bin/job",
+          "line": 519,
+          "end_line": 533,
+          "label": "save job.json"
+        },
+        {
+          "path": "factory/bin/guard",
+          "line": 38,
+          "end_line": 47,
+          "label": "agents write their file"
+        }
+      ]
+    },
+    {
+      "id": "gate",
+      "type": "security",
+      "label": "factory/bin/gate",
+      "sublabel": "checks.sh from main",
+      "pos": [
+        1060,
+        360
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/bin/gate",
+          "line": 165,
+          "end_line": 208,
+          "label": "runs checks, writes checks.md"
+        },
+        {
+          "path": "factory/bin/gate",
+          "line": 80,
+          "end_line": 95,
+          "label": "protected and guarded paths"
+        },
+        {
+          "path": "factory/checks.sh",
+          "line": 1,
+          "end_line": 37,
+          "label": "ruff, pytest, test count"
+        }
+      ]
+    },
+    {
+      "id": "issues",
+      "type": "database",
+      "label": "factory/issues/",
+      "sublabel": "Markdown issue files",
+      "pos": [
+        295,
+        520
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/bin/job",
+          "line": 191,
+          "end_line": 328,
+          "label": "FilesTracker"
+        }
+      ]
+    },
+    {
+      "id": "dashboard",
+      "type": "frontend",
+      "label": "dashboard.html",
+      "sublabel": "polls jobs/ every 2 s",
+      "pos": [
+        805,
+        520
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "sources": [
+        {
+          "path": "factory/dashboard.html",
+          "line": 740,
+          "end_line": 765,
+          "label": "loadJobs"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "op-fx",
+      "from": "operator",
+      "to": "fx",
+      "label": "runs",
+      "variant": "emphasis"
+    },
+    {
+      "id": "fx-orch",
+      "from": "fx",
+      "to": "orchestrator",
+      "label": "run or drive",
+      "variant": "emphasis"
+    },
+    {
+      "id": "orch-agents",
+      "from": "orchestrator",
+      "to": "agents",
+      "label": "spawns",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agents-wt",
+      "from": "agents",
+      "to": "worktrees",
+      "label": "commit, push"
+    },
+    {
+      "id": "wt-origin",
+      "from": "worktrees",
+      "to": "origin",
+      "label": "push branch"
+    },
+    {
+      "id": "guard-agents",
+      "from": "guard",
+      "to": "agents",
+      "label": "blocks",
+      "variant": "security"
+    },
+    {
+      "id": "orch-job",
+      "from": "orchestrator",
+      "to": "job",
+      "label": "advance"
+    },
+    {
+      "id": "fx-job",
+      "from": "fx",
+      "to": "job",
+      "label": "approve, feedback"
+    },
+    {
+      "id": "agents-folder",
+      "from": "agents",
+      "to": "jobfolder",
+      "label": "own file"
+    },
+    {
+      "id": "job-folder",
+      "from": "job",
+      "to": "jobfolder",
+      "label": "job.json"
+    },
+    {
+      "id": "gate-folder",
+      "from": "gate",
+      "to": "jobfolder",
+      "label": "checks.md"
+    },
+    {
+      "id": "gate-wt",
+      "from": "gate",
+      "to": "worktrees",
+      "label": "runs checks",
+      "variant": "security"
+    },
+    {
+      "id": "job-issues",
+      "from": "job",
+      "to": "issues",
+      "label": "labels, comments"
+    },
+    {
+      "id": "dash-folder",
+      "from": "dashboard",
+      "to": "jobfolder",
+      "label": "reads",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "How a job moves",
+      "items": [
+        "intake, spec, build, gate, review, approve, merge",
+        "after every agent, factory/bin/job checks its file and moves the job, or refuses",
+        "job merge syncs with main, runs the gate again and pushes main to origin.git"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Who may write what",
+      "items": [
+        "each agent writes only its own file in the job folder; the builder also its worktree",
+        "only factory/bin/job writes job.json and moves a job",
+        "the gate runs the checks from main, so a branch cannot change what judges it"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Not drawn",
+      "items": [
+        "factory/bin/route picks reviewers from risk and config.json",
+        "fx sweep, retro, bench and demo; the kata tracker"
+      ]
+    }
+  ]
+}

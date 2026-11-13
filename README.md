@@ -17,6 +17,13 @@ You can trip the gate, try illegal moves on the state machine and switch
 reviewers in and out. Press F or the Full screen button to present it. It is a
 single file and works offline.
 
+**Changing the factory?** [docs/architecture.html](docs/architecture.html) maps
+its parts as they are in the code: the scripts, the agents, the state files and
+who may write each one. Every box links to the lines it is drawn from. It was
+made with [Archify](https://github.com/tt-a1i/archify) from
+`docs/architecture.archify.json`; edit that file and render it again when the
+factory's structure changes.
+
 ## Quick start
 
 ```bash
@@ -436,7 +443,8 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   the approver passed it.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
-- `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.
+- `docs/presentation.html`, `docs/architecture.html`, `docs/local-mode.md` and
+  `docs/container.md` are new.
 
 ## Licence
 
