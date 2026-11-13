@@ -1622,7 +1622,9 @@ def test_gate_says_so_when_pytest_collects_no_acceptance_tests(sb):
 
 def stop_hook(sb, job_id):
     transcript = sb.repo.parent / f"transcript-{job_id}.jsonl"
-    transcript.write_text(json.dumps({"message": {"content": f"Job: {job_id}. Build it."}}) + "\n")
+    # As Claude Code writes it: the prompt is the first entry of type "user".
+    entry = {"type": "user", "message": {"content": f"Job: {job_id}. Build it."}}
+    transcript.write_text(json.dumps(entry) + "\n")
     event = json.dumps({"agent_transcript_path": str(transcript)})
     return sh([str(sb.repo / "factory/bin/gate"), "--hook"], sb.repo, check=False, stdin=event)
 
