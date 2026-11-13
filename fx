@@ -827,6 +827,13 @@ COMMANDS = [
      "lint, a failing test, a spec gap, a redundant test and so on. A label seen often\n"
      "enough gets a proposal: the agent prompt or file a fix would most likely change.\n"
      "A person makes that change; the factory can't edit its own setup. Read-only."),
+    ("bench", "replay past jobs on other models and compare: plan, report, list, clean",
+     "Sets up replays of jobs the factory already did, from the same starting commit and\n"
+     "the same sealed spec, with another model at one or more stations, and compares them\n"
+     "with the original: gate passes, rounds, approvals, cost, why rounds went back.\n"
+     "  fx bench plan <job>... --try builder=sonnet [--try builder=haiku] [--max-usd 5]\n"
+     "  fx bench report <bench>\n"
+     "`fx bench run` is not built yet: it needs the deterministic driver loop."),
     ("show", "a waiting job: the decision, the change, your options", None),
     ("approve", "approve a waiting job; the factory re-checks and merges",
      "Shows the job, asks, then approves it. The factory syncs the branch with the base,\n"
@@ -881,6 +888,7 @@ def build_parser():
     made["retro"].add_argument("--threshold", type=int, default=3, help="propose a fix from this many (default 3)")
     made["retro"].add_argument("--all", action="store_true", help="also count runs saved by `fx reset --keep`")
     made["retro"].add_argument("--json", action="store_true", help="machine-readable output")
+    made["bench"].add_argument("args", nargs=argparse.REMAINDER, help="plan, run, report, list or clean, and theirs")
     made["config"].add_argument("key", nargs="?", choices=sorted(CONFIG_KEYS), metavar="key",
                                 help="one of: " + ", ".join(sorted(CONFIG_KEYS)))
     made["config"].add_argument("value", nargs="?", help="the new value")
@@ -920,6 +928,8 @@ def dispatch(ns):
         return cmd_watch()
     if cmd == "show":
         return job("show", ns.job)
+    if cmd == "bench":
+        return subprocess.run(portable.script(FACTORY / "bin" / "bench", *ns.args), cwd=REPO).returncode
     if cmd == "retro":
         args = ["--threshold", ns.threshold] + (["--all"] if ns.all else []) + (["--json"] if ns.json else [])
         return subprocess.run(portable.script(FACTORY / "bin" / "retro", *args), cwd=REPO).returncode

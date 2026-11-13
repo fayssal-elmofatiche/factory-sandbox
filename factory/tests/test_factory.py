@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "drive"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "drive", "bench"}
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "Op", "GIT_AUTHOR_EMAIL": "op@example.com",
        "GIT_COMMITTER_NAME": "Op", "GIT_COMMITTER_EMAIL": "op@example.com"}
 
@@ -563,6 +563,77 @@ def test_without_human_merge_a_high_risk_job_merges(sb):
     job_id = sb.to_approved(risk="high")
     sb.job("merge", job_id)
     assert sb.state(job_id)["stage"] == "merged"
+
+
+# ---- The performance budget --------------------------------------------------
+
+# Appended to dayahead/orderbook.py: every hour's clearing sorts its prices 50 more times.
+SLOW_CLEARING = """
+
+_clear = OrderBook.clear
+
+
+def _slow_clear(self, hour):
+    for _ in range(50):
+        sorted(o.price for o in self.orders(hour))
+    return _clear(self, hour)
+
+
+OrderBook.clear = _slow_clear
+"""
+
+
+def approved_change(sb, path, text):
+    job_id = sb.to_build()
+    assert gate_after(sb, job_id, path=path, text=text).returncode == 0
+    sb.job("advance", job_id, "review")
+    sb.review(job_id)
+    sb.job("advance", job_id, "approve")
+    sb.decide(job_id)
+    return job_id
+
+
+def test_a_branch_over_budget_passes_the_gate_but_waits_for_a_person(sb):
+    job_id = approved_change(sb, "dayahead/orderbook.py", SLOW_CLEARING)
+    checks = (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    assert checks.startswith("GATE: PASS") and "BUDGET: OVER" in checks
+    assert "| clearing_ops |" in checks and "| OVER |" in checks
+    sb.job("merge", job_id)
+    s = sb.state(job_id)
+    assert s["stage"] == "needs-human" and not s["merge_failed"]
+    assert "_slow_clear" not in sb.base_file("dayahead/orderbook.py")
+    decision = (sb.dir(job_id) / "decision.md").read_text()
+    assert decision.startswith("ESCALATE") and "over budget: clearing_ops" in decision
+    out = sb.job("show", job_id).stdout
+    assert "budget (round-1/checks.md)" in out and "clearing_ops" in out and "OVER" in out
+    sb.job("approve", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+    assert "_slow_clear" in sb.base_file("dayahead/orderbook.py")
+
+
+def test_a_branch_within_budget_merges_on_its_own(sb):
+    job_id = approved_change(sb, "dayahead/orderbook.py", "\n# Cleared by merit order.\n")
+    checks = (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    assert "BUDGET: WITHIN" in checks and "| clearing_ops |" in checks and "+0.0%" in checks
+    assert "| clearing_ops | 0 |" not in checks  # a tracer that counts nothing must not pass
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "merged"
+
+
+def test_a_budget_the_script_cannot_measure_waits_for_a_person(sb):
+    set_config(sb, budgets={"clearing_furlongs": {"max_regression_pct": 10}})
+    job_id = sb.to_approved()
+    assert "BUDGET: UNMEASURED" in (sb.dir(job_id) / "round-1" / "checks.md").read_text()
+    sb.job("merge", job_id)
+    assert sb.state(job_id)["stage"] == "needs-human"
+    assert "clearing_furlongs" in (sb.dir(job_id) / "decision.md").read_text()
+
+
+def test_gate_fails_a_change_to_the_budget_script(sb):
+    job_id = sb.to_build()
+    res = gate_after(sb, job_id, path="factory/budget.py", text="\nRUNS = 0\n")
+    assert res.returncode == 1
+    assert "factory/budget.py" in (sb.dir(job_id) / "round-1" / "checks.md").read_text()
 
 
 def escalated(sb):

@@ -7,4 +7,5 @@ __pycache__/
 /factory/runs/
 /.claude/worktrees/
 /.claude/settings.local.json
+/factory/bench/
 /factory/sweeps/

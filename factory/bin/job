@@ -862,10 +862,32 @@ def route_by_diff(job):
     return added
 
 
+def over_budget(job, name="checks.md"):
+    """Why the performance budget keeps this job from merging on its own: the
+    gate wrote BUDGET: OVER or UNMEASURED into round-N/<name>, with the numbers
+    from factory/budget.py. Empty when the branch is within budget."""
+    path = round_dir(job) / name
+    if not path.exists():
+        return []
+    status = header(path).get("BUDGET", "")
+    if status not in {"OVER", "UNMEASURED"}:
+        return []
+    body = section(path, "Budget") or ""
+    rows = [[c.strip() for c in line.strip("|").split("|")] for line in body.splitlines()
+            if line.startswith("|") and line.rstrip().endswith("| OVER |")]
+    numbers = ", ".join(f"{r[0]} {r[1]} -> {r[2]} ({r[3]}, limit {r[4]})" for r in rows)
+    if status == "OVER":
+        return [f"factory/budget.py measured a regression over budget: {numbers} "
+                f"(round-{job['round']}/{name})"]
+    first = body.splitlines()[0] if body else ""
+    return [f"factory/budget.py could not measure the branch: {first.partition('(')[2].rstrip(')') or 'see ' + name}"]
+
+
 def needs_person(job):
-    """Why `human_merge` in config.json keeps this job from merging on its own:
-    the risk intake gave it, a surface intake named, or a file the branch changes
-    that `surface_paths` maps to one of the listed surfaces. Empty when nothing
+    """Why this job may not merge on its own: `human_merge` in config.json (the
+    risk intake gave it, a surface intake named, or a file the branch changes
+    that `surface_paths` maps to one of the listed surfaces), or a performance
+    budget the gate measured it over (over_budget()). Empty when nothing
     matches. A script decides this, not the approver's judgement."""
     rule = CONFIG.get("human_merge") or {}
     risks, wanted = set(rule.get("risk", [])), set(rule.get("surfaces", []))
@@ -879,6 +901,7 @@ def needs_person(job):
             for pattern, surfaces in CONFIG.get("surface_paths", {}).items():
                 if fnmatch.fnmatch(path, pattern):
                     why += [f"it changes {path} (surface {s})" for s in surfaces if s in wanted]
+    why += over_budget(job)
     return list(dict.fromkeys(why))
 
 
@@ -1302,7 +1325,7 @@ def cmd_merge(job):
     if not job.get("human_approved"):
         why = needs_person(job)
         if why:
-            return fail(f"Approved and gated, but `human_merge` in config.json says a person merges this job: "
+            return fail(f"Approved and gated, but config.json (`human_merge`, `budgets`) says a person merges this job: "
                         f"{'; '.join(why)}. To merge it, run `./fx approve {job['id']}` "
                         f"(or `factory/bin/job approve {job['id']}`): the factory syncs with {BASE}, "
                         f"runs the gate again and merges.", retry=False)
@@ -1319,6 +1342,10 @@ def cmd_merge(job):
         if gate.returncode != 0:
             return fail(f"The gate failed after syncing with {BASE}. "
                         f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}", retry=False)
+        over = [] if job.get("human_approved") else over_budget(job, "merge-checks.md")
+        if over:
+            return fail(f"Synced with {BASE} and gated, but the budget now holds it for a person: "
+                        f"{'; '.join(over)}. To merge it, run `./fx approve {job['id']}`.", retry=False)
         try:
             git(job, "push", "origin", job["branch"])
             if not CONFIG.get("auto_merge", True) and not job.get("human_approved"):
@@ -1407,6 +1434,11 @@ def cmd_show(job):
                 text = section(d / name, part)
                 if text:
                     print(f"  {part}:\n" + "\n".join("    " + line for line in text.splitlines()))
+    for name in ("merge-checks.md", "checks.md"):
+        budget = section(round_dir(job) / name, "Budget") if job["round"] and (round_dir(job) / name).exists() else None
+        if budget:
+            print(f"\nbudget (round-{job['round']}/{name}):\n" + "\n".join("  " + line for line in budget.splitlines()))
+            break
     if job["round"] and run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{job['branch']}"],
                             check=False).returncode == 0:
         run(["git", "fetch", "origin", BASE], check=False)
