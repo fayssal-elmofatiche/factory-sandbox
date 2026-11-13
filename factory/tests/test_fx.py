@@ -99,8 +99,8 @@ def merge_a_job(box, issue="1"):
 
 # ---- help and errors -------------------------------------------------------
 
-COMMANDS = ["doctor", "up", "down", "deck", "run", "sweep", "issues", "queue", "unqueue",
-            "status", "watch", "retro", "bench", "config", "baseline", "reset"]
+COMMANDS = ["doctor", "up", "down", "deck", "demo", "run", "sweep", "issues", "new", "queue",
+            "unqueue", "status", "watch", "retro", "bench", "config", "baseline", "reset"]
 
 
 def test_bare_fx_lists_every_command():
@@ -129,11 +129,12 @@ def test_output_cut_short_by_a_pipe_leaves_no_traceback():
 
 
 def test_queue_and_unqueue_change_what_the_next_run_does(sandbox):
-    assert "new\t3\t" not in fx(sandbox, "status").stdout
-    fx(sandbox, "queue", "3")
-    assert "new\t3\t" in fx(sandbox, "status").stdout
-    fx(sandbox, "unqueue", "3")
-    assert "new\t3\t" not in fx(sandbox, "status").stdout
+    row = "\t2\t-\t-\t"  # issue 2 in the queue: `new`, or `hold` while issue 1 has the one slot
+    assert row not in fx(sandbox, "status").stdout
+    fx(sandbox, "queue", "2")
+    assert row in fx(sandbox, "status").stdout
+    fx(sandbox, "unqueue", "2")
+    assert row not in fx(sandbox, "status").stdout
     assert fx(sandbox, "queue", "99", check=False).returncode != 0
 
 
@@ -197,13 +198,21 @@ def test_config_shows_the_settings(sandbox):
 
 
 def test_config_changes_one_setting_and_commits_it(sandbox):
-    fx(sandbox, "config", "concurrency", "1")
+    fx(sandbox, "config", "concurrency", "2")
     fx(sandbox, "config", "review.low", "sonnet")
-    assert cfg(sandbox)["concurrency"] == 1
+    assert cfg(sandbox)["concurrency"] == 2
     assert cfg(sandbox)["routing"]["low"]["code"] == "sonnet"
     assert run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=sandbox).stdout == ""
     assert "Set review.low to sonnet" in run(["git", "log", "-1", "--format=%s"], cwd=sandbox).stdout
-    assert "already" in fx(sandbox, "config", "concurrency", "1").stdout
+    assert "already" in fx(sandbox, "config", "concurrency", "2").stdout
+
+
+def test_config_sets_the_merge_switch(sandbox):
+    assert re.search(r"auto_merge\s+on", fx(sandbox, "config").stdout)
+    fx(sandbox, "config", "auto_merge", "off")
+    assert cfg(sandbox)["auto_merge"] is False
+    assert re.search(r"auto_merge\s+off", fx(sandbox, "config").stdout)
+    assert run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=sandbox).stdout == ""
 
 
 def test_config_sets_and_clears_the_cost_cap(sandbox):
@@ -218,7 +227,8 @@ def test_config_sets_and_clears_the_cost_cap(sandbox):
 
 @pytest.mark.parametrize("args", [("concurrency", "0"), ("concurrency", "many"), ("merge_method", "yolo"),
                                   ("review.low", "gpt"), ("nonsense", "1"), ("concurrency",),
-                                  ("max_cost_usd", "0"), ("max_cost_usd", "-1"), ("max_cost_usd", "lots")])
+                                  ("auto_merge", "maybe"), ("max_cost_usd", "0"), ("max_cost_usd", "-1"),
+                                  ("max_cost_usd", "lots")])
 def test_config_refuses_bad_input(sandbox, args):
     before = (sandbox / "factory" / "config.json").read_text()
     assert fx(sandbox, "config", *args, check=False).returncode != 0
@@ -233,7 +243,7 @@ def head(box, rev="HEAD"):
 
 
 def test_reset_discards_the_work_and_keeps_the_setup(sandbox):
-    fx(sandbox, "config", "concurrency", "1")
+    fx(sandbox, "config", "concurrency", "2")
     job_id = merge_a_job(sandbox)
     with open(sandbox / "AGENTS.md", "a") as f:  # an uncommitted setup edit is kept too
         f.write("\nA note for the next run.\n")
@@ -241,7 +251,7 @@ def test_reset_discards_the_work_and_keeps_the_setup(sandbox):
     out = fx(sandbox, "reset", "--yes", "--keep").stdout
     assert job_id in out and "factory/config.json" in out
 
-    assert cfg(sandbox)["concurrency"] == 1
+    assert cfg(sandbox)["concurrency"] == 2
     assert (sandbox / "AGENTS.md").read_text().endswith("A note for the next run.\n")
     assert "# a change" not in (sandbox / "dayahead" / "seed.py").read_text()
     assert not (sandbox / "factory" / "jobs" / job_id).exists()
@@ -327,7 +337,7 @@ def test_setup_makes_the_clone_its_own_sandbox(tmp_path):
     assert bare.strip() == "true"
     assert run(["git", "remote", "get-url", "upstream"], cwd=clone).stdout.strip() == came_from
     issues = sorted(x.name for x in (clone / "factory" / "issues").glob("*.md"))
-    assert issues == [f"{n}.md" for n in range(1, 7)]
+    assert issues == [f"{n}.md" for n in range(1, 8)]
     assert "new\t1\t" in fx(clone, "status").stdout
     assert "Already set up" in fx(clone, "setup").stdout  # a second run changes nothing
     assert "Starting point" in fx(clone, "baseline").stdout  # fx reset and baseline accept it
@@ -403,9 +413,86 @@ def test_a_decision_without_words_changes_nothing(sandbox):
     assert res.returncode == 1 and "nothing changed" in res.stderr and stage(sandbox, job_id) == "needs-human"
 
 
+def ask_a_question(box, issue="1"):
+    """Drive one job to needs-info by writing intake's file by hand."""
+    job = str(box / "factory" / "bin" / "job")
+    job_id = run([job, "create", issue], cwd=box).stdout.strip()
+    (box / "factory" / "jobs" / job_id / "intake.md").write_text(
+        "DECISION: NEEDS-INFO\nRISK: low\nSURFACES: none\nRESCOPED: no\n\n## Summary\n- unclear\n\n"
+        "## Questions\n1. Which hours count as peak?\n")
+    run([job, "advance", job_id, "needs-info"], cwd=box)
+    return job_id
+
+
+def test_answer_posts_the_reply_and_the_job_can_go_on(sandbox):
+    job_id = ask_a_question(sandbox)
+    assert f"./fx answer {job_id}" in fx(sandbox, "show", "1").stdout
+    assert f"./fx answer {job_id}" in fx(sandbox, "status").stdout
+    out = fx(sandbox, "answer", "1", "08:00", "to", "20:00").stdout
+    assert "fx run" in out
+    assert "08:00 to 20:00" in (sandbox / "factory" / "issues" / "1.md").read_text()
+    assert f"resume\t1\t{job_id}\tneeds-info\tauthor replied" in fx(sandbox, "status").stdout
+    empty = fx(sandbox, "answer", "1", check=False, stdin=" \n")
+    assert empty.returncode == 1 and "nothing changed" in empty.stderr
+
+
+def test_new_files_a_queued_issue(sandbox):
+    before = len(fx(sandbox, "issues").stdout.splitlines())
+    out = fx(sandbox, "new", "Show the base price", "As", "a", "tile.").stdout
+    ref = re.search(r"issue (\d+) filed", out).group(1)
+    assert int(ref) == before + 1
+    assert f"{ref}\topen\tfactory\tShow the base price" in fx(sandbox, "issues").stdout
+    assert "As a tile." in (sandbox / "factory" / "issues" / f"{ref}.md").read_text()
+    piped = fx(sandbox, "new", "From a pipe", stdin="The request.\n").stdout
+    assert "filed and queued" in piped
+    assert fx(sandbox, "new", "Nothing", check=False, stdin="").returncode == 1
+
+
+# ---- demo: replay a saved run ----------------------------------------------
+
+
+def replayed(box, job_id):
+    return json.loads((box / "factory" / "replay" / job_id / "job.json").read_text())
+
+
+def test_demo_replays_a_saved_run_without_touching_the_factory(sandbox):
+    job_id = merge_a_job(sandbox)
+    fx(sandbox, "reset", "--yes", "--keep")
+    issues_before = fx(sandbox, "issues").stdout
+    out = fx(sandbox, "demo", "--seconds", "0", "--no-open").stdout
+    assert "dashboard.html?dir=replay" in out and f"{job_id}: approve -> merging" in out
+    job = replayed(sandbox, job_id)
+    assert job["stage"] == "merged" and job["round"] == 1 and job["merged_sha"]
+    folder = sandbox / "factory" / "replay" / job_id
+    for name in ("issue.md", "intake.md", "spec.md", "build.md", "decision.md", "round-1/checks.md",
+                 "round-1/review-code.md", "events.jsonl"):
+        assert (folder / name).exists(), name
+    assert json.loads((sandbox / "factory" / "replay" / "clock.json").read_text())["done"] is True
+    assert not (sandbox / "factory" / "jobs" / job_id).exists()
+    assert fx(sandbox, "issues").stdout == issues_before
+    assert run(["git", "status", "--porcelain"], cwd=sandbox).stdout == ""
+
+
+def test_demo_step_by_step_shows_a_job_part_of_the_way(sandbox):
+    job_id = merge_a_job(sandbox)
+    fx(sandbox, "reset", "--yes", "--keep")
+    # issue.md, the job, intake.md, intake -> spec, spec.md, spec -> build: six steps, then no more input.
+    fx(sandbox, "demo", "--step", "--no-open", stdin="\n" * 6)
+    job = replayed(sandbox, job_id)
+    folder = sandbox / "factory" / "replay" / job_id
+    assert job["stage"] == "build" and job["round"] == 1 and job["ended"] is None and not job["merged_sha"]
+    assert (folder / "spec.md").exists() and not (folder / "build.md").exists()
+    assert json.loads((sandbox / "factory" / "replay" / "clock.json").read_text())["done"] is False
+
+
+def test_demo_without_a_saved_run_says_how_to_get_one(sandbox):
+    res = fx(sandbox, "demo", "--no-open", check=False)
+    assert res.returncode == 1 and "reset --keep" in res.stderr
+
+
 def test_help_lists_the_decision_commands(sandbox):
     out = fx(sandbox).stdout
-    for name in ("show", "approve", "feedback", "reject", "retry", "park"):
+    for name in ("new", "show", "answer", "approve", "feedback", "reject", "retry", "park"):
         assert f"\n    {name} " in out
     assert "--yes" in fx(sandbox, "approve", "--help").stdout
 
@@ -476,7 +563,7 @@ def test_reset_keeps_a_new_setup_file_and_keeps_a_deleted_one_deleted(sandbox):
 def test_reset_says_which_new_issue_files_it_deletes(sandbox):
     run([str(sandbox / "factory" / "bin" / "job"), "new-issue", "Mine"], cwd=sandbox, stdin="body")
     out = fx(sandbox, "reset", check=False, stdin="no\n").stdout
-    assert "delete 1 issue file(s) written since: 7.md" in out
+    assert "delete 1 issue file(s) written since: 8.md" in out
 
 
 def test_reset_refuses_while_an_earlier_resets_copy_is_still_there(sandbox):
