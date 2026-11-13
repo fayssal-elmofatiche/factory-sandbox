@@ -738,10 +738,12 @@ def cost_usd(job):
     folder, and the models that had no price.
 
     Claude Code writes each subagent's messages, with model and token usage, to
-    <config>/projects/<project>/<session>/subagents/agent-<id>.jsonl. Every
-    factory prompt starts with `Job folder: <path>`, which ties a transcript to
-    its job across sessions. A model missing from the price table counts as
-    zero: cost is a report, and a report must never stop a job.
+    <config>/projects/<project>/<session>/subagents/agent-<id>.jsonl. An agent
+    that factory/bin/drive runs headless is a session of its own, written to
+    <config>/projects/<project>/<session>.jsonl. Every factory prompt starts
+    with `Job folder: <path>`, which ties a transcript to its job across
+    sessions. A model missing from the price table counts as zero: cost is a
+    report, and a report must never stop a job.
     """
     def spelling(text):  # Windows prompts mix \ and /, and the drive letter's case may vary
         text = text.replace("\\", "/")
@@ -751,10 +753,11 @@ def cost_usd(job):
     prices = CONFIG["prices_usd_per_mtok"]
     total = 0.0
     unpriced = set()
-    for path in transcripts_dir().glob("*/subagents/agent-*.jsonl"):
+    for path in [*transcripts_dir().glob("*/subagents/agent-*.jsonl"), *transcripts_dir().glob("*.jsonl")]:
         try:
             with path.open(encoding="utf-8") as f:
-                first = f.readline()
+                # A subagent's prompt is its first line; a session's is its first user message.
+                first = next((line for line in f if json.loads(line).get("type") == "user"), "")
                 if not first or needle not in spelling(prompt_text(first)):
                     continue
                 usage_by_message = {}

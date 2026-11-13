@@ -19,6 +19,12 @@ tell the user; never work around it.
 /factory <anything>   talk to the factory: ask about jobs, give feedback, file a feature
 ```
 
+`./fx drive` (`factory/bin/drive`) takes the steps of `/factory run` below with a
+script instead of you: it starts each agent headless and makes the same
+`factory/bin/job` calls. Don't run `/factory run` while a driver runs
+(`factory/jobs/.drive/drive.json` names its pid): two orchestrators would
+start the same agents. `/factory <anything>` is unchanged.
+
 ## The pipeline
 
 ```

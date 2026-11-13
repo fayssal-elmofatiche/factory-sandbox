@@ -224,8 +224,12 @@ def hook():
     event = json.load(sys.stdin)
     if event.get("stop_hook_active"):
         sys.exit(0)  # one nudge per stop; the gate decides
-    with open(Path(event["agent_transcript_path"]).expanduser()) as f:
-        content = json.loads(f.readline())["message"]["content"]
+    # A subagent's SubagentStop names its own transcript, whose first line is its prompt. A headless
+    # builder (factory/bin/drive) is the main session: its Stop names the session's transcript, where
+    # the prompt is the first user message.
+    path = event.get("agent_transcript_path") or event["transcript_path"]
+    with open(Path(path).expanduser(), encoding="utf-8") as f:
+        content = next(entry["message"]["content"] for entry in map(json.loads, f) if entry.get("type") == "user")
     prompt = content if isinstance(content, str) else " ".join(b.get("text", "") for b in content)
     job_id = prompt.split("Job: ", 1)[1].split(".", 1)[0]
     job = json.loads((FACTORY / "jobs" / job_id / "job.json").read_text())
