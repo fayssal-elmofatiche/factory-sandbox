@@ -816,6 +816,13 @@ COMMANDS = [
      "--report writes factory/retro/<date>.md instead: the jobs since the last report,\n"
      "a proposed diff to the prompt for each pattern, citing the job files and lines,\n"
      "and whether the patterns the last report proposed came back."),
+    ("bench", "replay past jobs on other models and compare: plan, report, list, clean",
+     "Sets up replays of jobs the factory already did, from the same starting commit and\n"
+     "the same sealed spec, with another model at one or more stations, and compares them\n"
+     "with the original: gate passes, rounds, approvals, cost, why rounds went back.\n"
+     "  fx bench plan <job>... --try builder=sonnet [--try builder=haiku] [--max-usd 5]\n"
+     "  fx bench report <bench>\n"
+     "`fx bench run` is not built yet: it needs the deterministic driver loop."),
     ("show", "a waiting job: the decision, the change, your options", None),
     ("approve", "approve a waiting job; the factory re-checks and merges",
      "Shows the job, asks, then approves it. The factory syncs the branch with the base,\n"
@@ -872,6 +879,7 @@ def build_parser():
     made["retro"].add_argument("--report", action="store_true", help="write the dated report to factory/retro/")
     made["retro"].add_argument("--print", action="store_true", help="with --report: show it, write nothing")
     made["retro"].add_argument("--date", help="the report's date, YYYY-MM-DD (default today)")
+    made["bench"].add_argument("args", nargs=argparse.REMAINDER, help="plan, run, report, list or clean, and theirs")
     made["config"].add_argument("key", nargs="?", choices=sorted(CONFIG_KEYS), metavar="key",
                                 help="one of: " + ", ".join(sorted(CONFIG_KEYS)))
     made["config"].add_argument("value", nargs="?", help="the new value")
@@ -909,6 +917,8 @@ def dispatch(ns):
         return cmd_watch()
     if cmd == "show":
         return job("show", ns.job)
+    if cmd == "bench":
+        return subprocess.run(portable.script(FACTORY / "bin" / "bench", *ns.args), cwd=REPO).returncode
     if cmd == "retro":
         args = (["--threshold", ns.threshold] + (["--all"] if ns.all else []) + (["--json"] if ns.json else [])
                 + (["--report"] if ns.report else []) + (["--print"] if ns.print else [])

@@ -2,7 +2,7 @@
 """The deterministic gate: does the job's branch pass the repo's checks?
 
 Modified from ZazenCodes Software Factory v2 (GPLv3), November 2026: guarded
-paths and a timeout.
+paths, a timeout and a performance budget.
 
 Usage:
   gate <job-id>            write round-N/checks.md; exit 0 on PASS, 1 on FAIL
@@ -20,6 +20,11 @@ also matches `/`):
                     factory itself and the configuration the checks read
                     (test runner and linter settings, conftest.py). A branch
                     that could edit those could grade itself.
+
+When the checks pass, the gate also runs the main checkout's factory/budget.py
+against `budgets` in config.json and writes the numbers into checks.md. A
+breach doesn't fail the gate: checks.md says BUDGET: OVER, and `job merge`
+then leaves the merge to a person (see needs_person() in factory/bin/job).
 """
 
 import fnmatch
@@ -38,8 +43,10 @@ REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
 CONFIG = json.loads((FACTORY / "config.json").read_text())
 CHECKS = FACTORY / "checks.sh"
+BUDGET = FACTORY / "budget.py"
 TAIL = 80
 TIMEOUT = CONFIG.get("gate_timeout_seconds", 1800)
+HOLD = {"over", "unmeasured"}  # budget results that send the job to a person
 
 
 def die(msg):
@@ -88,6 +95,32 @@ def run_checks(worktree):
     return code, out, int(time.monotonic() - start)
 
 
+def run_budget(worktree):
+    """The budget report for the worktree, from the main checkout's budget.py."""
+    if not BUDGET.exists() or not CONFIG.get("budgets"):
+        return {"status": "skipped", "metrics": {}, "note": "no budgets in config.json"}
+    res = subprocess.run([sys.executable, str(BUDGET), str(worktree)], capture_output=True, text=True,
+                         timeout=TIMEOUT)
+    try:
+        return json.loads(res.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        return {"status": "unmeasured", "metrics": {},
+                "note": f"factory/budget.py exited {res.returncode}: {(res.stderr or res.stdout).strip()[-300:]}"}
+
+
+def budget_section(budget):
+    """The `## Budget` section of checks.md: one row per budgeted metric."""
+    lines = [f"Status: {budget['status']}" + (f" ({budget['note']})" if budget.get("note") else "")]
+    if budget["metrics"]:
+        lines += ["", "| metric | origin/main | branch | change | limit | |", "|---|---|---|---|---|---|"]
+        for name, m in budget["metrics"].items():
+            lines.append(f"| {name} | {m['base']} | {m['branch']} | {m['change_pct']:+.1f}% "
+                         f"| +{m['max_regression_pct']}% | {'OVER' if m['over'] else 'ok'} |")
+    for name, m in (budget.get("info") or {}).items():
+        lines.append(f"\n{name} (not budgeted, for information): origin/main {m['base']}, branch {m['branch']}")
+    return "\n".join(lines)
+
+
 def gate(job_id, merge):
     job = json.loads((FACTORY / "jobs" / job_id / "job.json").read_text())
     worktree = job["worktree"]
@@ -98,25 +131,30 @@ def gate(job_id, merge):
     protected = protected_changes(worktree)
     code, log, seconds = run_checks(worktree)
     verdict = "PASS" if code == 0 and not protected else "FAIL"
+    budget = run_budget(worktree) if verdict == "PASS" else {"status": "skipped", "metrics": {},
+                                                              "note": "the checks failed"}
     name = "merge-checks" if merge else "checks"
     (round_dir / f"{name}.log").write_text(log)
     tail = "\n".join(log.rstrip().splitlines()[-TAIL:])
     summary = [
         f"checks.sh {'passed' if code == 0 else f'failed with exit {code}'} in {seconds}s",
         f"Protected and guarded paths: {'changed: ' + ', '.join(protected) if protected else 'none changed'}",
+        f"Budget: {budget['status']}" + (", so a person merges this job" if budget["status"] in HOLD else ""),
         f"Commit {commit[:7]}" + (", synced with the latest main before merging" if merge else ""),
     ]
     (round_dir / f"{name}.md").write_text(
-        f"GATE: {verdict}\nCOMMIT: {commit}\n\n"
+        f"GATE: {verdict}\nCOMMIT: {commit}\nBUDGET: {budget['status'].upper()}\n\n"
         "## Summary\n" + "\n".join(f"- {s}" for s in summary) + "\n\n"
         "## Protected paths\n"
         + ("\n".join(f"- {p}" for p in protected)
            + "\n\nA job may not change these. If the spec can't be met without them, the builder writes "
              "STATUS: BLOCKED and a person decides." if protected else "None changed.")
-        + f"\n\n## checks.sh\nExit {code} in {seconds}s. Last {TAIL} lines of {name}.log:\n\n```\n{tail}\n```\n"
+        + f"\n\n## Budget\n{budget_section(budget)}\n"
+        + f"\n## checks.sh\nExit {code} in {seconds}s. Last {TAIL} lines of {name}.log:\n\n```\n{tail}\n```\n"
     )
     print(f"GATE: {verdict} ({job_id} round {job['round']}, checks.sh exit {code} in {seconds}s"
-          + (f", protected paths changed: {', '.join(protected)}" if protected else "") + ")")
+          + (f", protected paths changed: {', '.join(protected)}" if protected else "")
+          + f", budget {budget['status']})")
     sys.exit(0 if verdict == "PASS" else 1)
 
 

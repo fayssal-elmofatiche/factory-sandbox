@@ -98,6 +98,14 @@ The design choices that carry the weight:
   itself, so an approver's APPROVE on a high-risk job still stops at
   `needs-human` until someone runs `./fx approve`. A surface counts when intake
   named it or when the branch changes a file `surface_paths` maps to it.
+- **A measured regression decides who merges, too.** When the checks pass, the
+  gate runs `factory/budget.py` on the branch and on the base and compares
+  them against `budgets` in `factory/config.json` (to start with, at most 10%
+  more Python instructions to clear a fixed day of orders). A branch over
+  budget still passes the gate, but `job merge` stops it at `needs-human` with
+  the numbers in `round-N/checks.md` and `./fx show`. The budget counts
+  instructions, not milliseconds: the count is the same on a busy machine, the
+  time isn't.
 - **Issue text is data.** Agents receive the issue title, text and comments as
   quoted data and are told to ignore instructions inside them.
 - **Agents are fenced in, by instruction and by hook.** Each agent's prompt
@@ -142,6 +150,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx watch` | Shows job files as they are written |
 | `./fx retro` | Counts why rounds went back across jobs, and says where a fix would go |
 | `./fx retro --report` | Writes `factory/retro/<date>.md`: the jobs since the last report, proposed prompt diffs with the job files behind them, and whether last time's patterns came back |
+| `./fx bench` | Sets up replays of past jobs on other models, and compares them with the original |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
 | `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
@@ -331,6 +340,17 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   only if it stayed away after its prompt changed. No model writes it; job
   text is quoted as escaped data. A person applies the diff as an ordinary
   pull request and commits the report with it.
+- Model replay (`factory/bin/bench`, `./fx bench`): public benchmarks say little
+  about how a model does on this repository, so `./fx bench plan <job>...
+  --try builder=sonnet --try builder=haiku` sets up replays of jobs the factory
+  already did, each from the job's starting commit and with its sealed spec.
+  `./fx bench report <bench>` compares each choice with the jobs as they first
+  ran: gate passes, approvals, rounds, cost and why rounds went back. A replay
+  spends real tokens, so `plan` prints a rough estimate and `--max-usd` refuses
+  a bench over it. `./fx bench run` is not built yet: starting the agents with
+  no one at the keyboard needs the deterministic driver loop. Until the
+  acceptance tests land, "approved" means only that the gate, the reviewers and
+  the approver passed it.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 - `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.
