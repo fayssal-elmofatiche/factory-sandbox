@@ -130,6 +130,7 @@ pre { font-family: var(--code); font-size: .8rem; line-height: 1.5; margin: 0; p
 pre.cmds { white-space: pre; overflow-wrap: normal; overflow-x: auto; font-size: .64rem; }
 .doc { display: grid; grid-template-columns: 1fr 1.25fr; gap: 1.8rem; align-items: start; }
 .doc pre { height: 15.5em; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--dead) transparent; }
+.archmap { display: block; width: 100%; height: calc(100vh - 21rem); min-height: 20rem; margin-top: .8rem; border: 2px solid var(--ink); border-radius: 4px; background: #fff; }
 .figs { display: flex; flex-wrap: wrap; gap: 1.1rem 2.6rem; margin: .5rem 0 1rem; }
 .figs b { font-family: var(--display); font-size: clamp(2.4rem, 4.8vw, 4.6rem); line-height: 1; display: block; font-variant-numeric: tabular-nums; }
 .figs span { color: var(--muted); }
@@ -668,6 +669,12 @@ const SLIDES = [
         ${row('./fx reset', 'discards the work, keeps your setup, starts again')}
         <p class="dim small" style="margin-top:1em"><code>./fx &lt;command&gt; --help</code> explains each one.</p></div>
       </div>` },
+    board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
+
+  { name: 'In the code', side: 'wide', frame: ALL,
+    html: () => `<h2>The same line, as it is built in the code</h2>
+      <p class="dim">The scripts, the agents and the files they write, and who may write each one. Every box links to the lines it is drawn from. Click into the map to pan and zoom; <a href="architecture.html" target="_blank" rel="noopener">open it on its own</a> for the full view. Click outside it again to go on with the arrow keys.</p>
+      <iframe class="archmap" src="architecture.html" title="Architecture of the factory, drawn from the code" loading="lazy"></iframe>`,
     board: () => { cl('ambient', 'hide', false); live(9); feeders({ code: 'Haiku', ui: 'Haiku', security: 'Opus' }, true) } },
 
   { name: 'In short', side: 'left', frame: [3100, 1250, 6800],
