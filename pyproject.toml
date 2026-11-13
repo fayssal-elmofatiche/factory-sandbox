@@ -5,6 +5,10 @@ description = "A small day-ahead power auction used to demo a software factory"
 requires-python = ">=3.10"
 license = "GPL-3.0-only"
 
+# The app itself needs only the standard library. These run the checks and the tests.
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
