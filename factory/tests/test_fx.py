@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "factory" / "bin"))
 import portable  # noqa: E402
 
-SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro"}
+SCRIPTS = {"fx", "job", "gate", "route", "guard", "retro", "bench"}
 GIT_ID = ["-c", "user.name=fx test", "-c", "user.email=fx@test.invalid"]
 
 
@@ -100,7 +100,7 @@ def merge_a_job(box, issue="1"):
 # ---- help and errors -------------------------------------------------------
 
 COMMANDS = ["doctor", "up", "down", "deck", "run", "sweep", "issues", "queue", "unqueue",
-            "status", "watch", "retro", "config", "baseline", "reset"]
+            "status", "watch", "retro", "bench", "config", "baseline", "reset"]
 
 
 def test_bare_fx_lists_every_command():
@@ -180,6 +180,12 @@ def test_retro_counts_why_rounds_went_back(sandbox):
     out = fx(sandbox, "retro", "--threshold", "1").stdout
     assert "bug" in out and "Propose" in out and f"{job_id} round 1 code" in out
     assert json.loads(fx(sandbox, "retro", "--json").stdout)["labels"]["bug"]["count"] == 1
+
+
+def test_bench_passes_its_arguments_through(sandbox):
+    assert "No benches yet" in fx(sandbox, "bench", "list").stdout
+    res = fx(sandbox, "bench", "plan", "001-nope", "--try", "builder=sonnet", check=False)
+    assert res.returncode == 1 and "no job 001-nope" in res.stderr
 
 
 # ---- config ----------------------------------------------------------------

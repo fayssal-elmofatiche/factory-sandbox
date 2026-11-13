@@ -141,6 +141,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
 | `./fx retro` | Counts why rounds went back across jobs, and says where a fix would go |
+| `./fx bench` | Sets up replays of past jobs on other models, and compares them with the original |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 1` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
 | `./fx approve <job>` | Approves it: the factory runs the checks again and merges |
@@ -321,6 +322,17 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   enough, names the prompt or file a fix would most likely change. A person
   makes that change: the gate fails any job that edits `.claude/` or
   `factory/config.json`, so the factory can't rewrite its own setup.
+- Model replay (`factory/bin/bench`, `./fx bench`): public benchmarks say little
+  about how a model does on this repository, so `./fx bench plan <job>...
+  --try builder=sonnet --try builder=haiku` sets up replays of jobs the factory
+  already did, each from the job's starting commit and with its sealed spec.
+  `./fx bench report <bench>` compares each choice with the jobs as they first
+  ran: gate passes, approvals, rounds, cost and why rounds went back. A replay
+  spends real tokens, so `plan` prints a rough estimate and `--max-usd` refuses
+  a bench over it. `./fx bench run` is not built yet: starting the agents with
+  no one at the keyboard needs the deterministic driver loop. Until the
+  acceptance tests land, "approved" means only that the gate, the reviewers and
+  the approver passed it.
 - `factory/config.json`: prices for `claude-fable-5-2` and a corrected
   cache-read price for `claude-sonnet-5-5`, from Anthropic's price list.
 - `docs/presentation.html`, `docs/local-mode.md` and `docs/container.md` are new.
