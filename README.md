@@ -151,6 +151,7 @@ one. Its tests run with `python3 -m pytest factory/tests -q`.
 | `./fx status` | Shows the jobs and what the next run would do |
 | `./fx watch` | Shows job files as they are written |
 | `./fx retro` | Counts why rounds went back across jobs, and says where a fix would go |
+| `./fx retro --report` | Writes `factory/retro/<date>.md`: the jobs since the last report, proposed prompt diffs with the job files behind them, and whether last time's patterns came back |
 | `./fx bench` | Sets up replays of past jobs on other models, and compares them with the original |
 | `./fx config` | Shows the settings worth changing; `./fx config concurrency 2` changes one |
 | `./fx show <job>` | For a job that waits for you: the decision, the change and your options |
@@ -355,6 +356,15 @@ PORT=8001 python3 -m dayahead.web  # prices page on http://127.0.0.1:8001/
   enough, names the prompt or file a fix would most likely change. A person
   makes that change: the gate fails any job that edits `.claude/` or
   `factory/config.json`, so the factory can't rewrite its own setup.
+- Retro report (`factory/bin/lessons.py`, `./fx retro --report`): writes
+  `factory/retro/<date>.md` for the jobs since the last report. It groups the
+  failures, rounds per job, escalations and parks, a person's feedback and
+  time by station, and for each pattern seen `--threshold` times proposes a
+  diff to the prompt where a fix would go, citing the job files and lines. The
+  next report says whether those patterns came back, and counts one as fixed
+  only if it stayed away after its prompt changed. No model writes it; job
+  text is quoted as escaped data. A person applies the diff as an ordinary
+  pull request and commits the report with it.
 - Model replay (`factory/bin/bench`, `./fx bench`): public benchmarks say little
   about how a model does on this repository, so `./fx bench plan <job>...
   --try builder=sonnet --try builder=haiku` sets up replays of jobs the factory

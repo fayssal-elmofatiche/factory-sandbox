@@ -95,3 +95,15 @@ def test_the_reviewer_prompts_offer_only_labels_retro_knows():
         offered = set(re.findall(r"`\[([a-z-]+)\]`", text))
         unknown = offered - set(labels.REVIEW_LABELS)
         assert offered and not unknown, (prompt.name, unknown)
+
+
+def test_job_evidence_says_which_file_and_line_each_failure_comes_from(tmp_path):
+    (tmp_path / "round-1").mkdir()
+    (tmp_path / "round-1" / "checks.md").write_text(CHECKS.format(protected="None changed."))
+    (tmp_path / "round-1" / "checks.log").write_text("ruff check .\nFound 1 error.\n")
+    (tmp_path / "round-1" / "review-code.md").write_text(review("CHANGES", "1. [bug] a.py:1 x\n2. b.py:2 y"))
+    assert [(e["label"], e["file"], e["line"], e["text"]) for e in labels.job_evidence(tmp_path)] == [
+        ("gate:lint", "round-1/checks.log", 2, "Found 1 error."),
+        ("bug", "round-1/review-code.md", 7, "[bug] a.py:1 x"),
+        ("unlabelled", "round-1/review-code.md", 8, "b.py:2 y"),
+    ]
