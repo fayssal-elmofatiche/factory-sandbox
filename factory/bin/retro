@@ -2,6 +2,7 @@
 """Why rounds went back to the builder, counted across jobs.
 
 Usage: retro [--threshold N] [--all] [--json]
+       retro --report [--threshold N] [--date YYYY-MM-DD] [--print]
 
 Reads every job folder's rounds (see labels.py for the labels), counts each
 label, and for a label seen at least N times (default 3) proposes where a fix
@@ -11,15 +12,24 @@ factory/config.json are guarded, so the factory can't make them itself.
 --all also counts the runs `fx reset --keep` saved under factory/runs/.
 --json prints the counts and every place a label was seen, for scripts.
 
-Read-only: it writes nothing, not even job.json.
+--report writes factory/retro/<date>.md instead (see lessons.py): the jobs
+since the last report, grouped, with a proposed diff to the prompt where a fix
+would go, each citing the job files and lines behind it, and whether the
+patterns the last report proposed came back. --print shows it without writing.
+
+Read-only towards the jobs: it never writes job folders or job.json. --report
+writes only its own report.
 """
 
 import argparse
 import json
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 import labels
+import lessons
 import portable
 
 if __name__ == "__main__":
@@ -57,9 +67,23 @@ def main(argv):
     parser.add_argument("--threshold", type=int, default=3, help="propose a fix from this many (default 3)")
     parser.add_argument("--all", action="store_true", help="also count the runs saved under factory/runs/")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--report", action="store_true", help="write the dated report to factory/retro/")
+    parser.add_argument("--print", action="store_true", help="with --report: show it, write nothing")
+    parser.add_argument("--date", default=date.today().isoformat(), help="the report's date (default today)")
     ns = parser.parse_args(argv)
     if ns.threshold < 1:
         parser.error("--threshold must be 1 or more")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", ns.date):
+        parser.error("--date must be YYYY-MM-DD")
+    if ns.report:
+        args = (FACTORY.parent, FACTORY / "jobs", FACTORY / "retro", ns.date, ns.threshold)
+        if ns.print:
+            print(lessons.build(*args)[0])
+        else:
+            path = lessons.write(*args)
+            print(f"Wrote {path.relative_to(FACTORY.parent).as_posix()}. A person reads it and makes the "
+                  "change as an ordinary pull request; commit the report with it.")
+        return 0
     jobs, counts = collect(ns.all)
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
 

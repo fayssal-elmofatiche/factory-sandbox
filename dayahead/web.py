@@ -115,8 +115,8 @@ def render_prices(book: OrderBook) -> str:
         f'<p class="meta">Delivery day <time datetime="{day.isoformat()}">'
         f'{day.strftime("%A")} {day.day} {day.strftime("%B %Y")}</time></p></header>'
         f"{body}"
-        '<footer><p class="meta">One uniform price per hour, set by merit order: '
-        "the cheapest offers that meet demand, with the last one needed setting the price.</p></footer>"
+        '<footer><p class="meta">One uniform price per hour, set by merit order: the cheapest offers '
+        "serve the dearest bids, and the last order needed, an offer or a bid, sets the price.</p></footer>"
         "</main></body></html>"
     )
 

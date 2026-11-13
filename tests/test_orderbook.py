@@ -82,12 +82,12 @@ def test_marginal_offer_sets_the_price(book):
     assert (c.price, c.volume_mwh, c.bids, c.offers) == (50.0, 150, 1, 2)
 
 
-def test_demand_limits_volume_and_cheapest_offer_sets_price(book):
+def test_marginal_bid_sets_the_price_when_supply_runs_out(book):
     add(book, "supply", "offer", 100, 20.0)
     add(book, "low", "bid", 100, 30.0)
     add(book, "high", "bid", 50, 80.0)
     c = book.clear(8)
-    assert (c.price, c.volume_mwh) == (20.0, 100)
+    assert (c.price, c.volume_mwh) == (30.0, 100)  # "low" is cut to 50 MWh, so it sets the price
 
 
 def test_expensive_offer_drops_out_when_bids_stop(book):
@@ -95,7 +95,27 @@ def test_expensive_offer_drops_out_when_bids_stop(book):
     add(book, "dear", "offer", 100, 90.0)
     add(book, "demand", "bid", 300, 60.0)
     c = book.clear(8)
+    assert (c.price, c.volume_mwh) == (60.0, 100)
+
+
+def test_equal_supply_and_demand_clear_at_the_offer_price(book):
+    add(book, "supply", "offer", 100, 20.0)
+    add(book, "demand", "bid", 100, 80.0)
+    c = book.clear(8)
     assert (c.price, c.volume_mwh) == (20.0, 100)
+
+
+def test_only_orders_at_the_clearing_price_are_cut():
+    """Bids above the price and offers below it trade in full, in every hour of the sample day."""
+    book = sample_book()
+    for c in book.results():
+        orders = book.orders(c.hour)
+        bids_above = sum(o.volume_mwh for o in orders if o.side == "bid" and o.price > c.price)
+        offers_below = sum(o.volume_mwh for o in orders if o.side == "offer" and o.price < c.price)
+        bids_at = sum(o.volume_mwh for o in orders if o.side == "bid" and o.price == c.price)
+        offers_at = sum(o.volume_mwh for o in orders if o.side == "offer" and o.price == c.price)
+        assert bids_above <= c.volume_mwh <= bids_above + bids_at
+        assert offers_below <= c.volume_mwh <= offers_below + offers_at
 
 
 def test_negative_prices_clear(book):
@@ -159,5 +179,5 @@ def test_merit_order_rank_is_none_for_bids_and_refuses_unknown(book):
 def test_sample_book_clears_every_hour():
     results = sample_book().results()
     assert all(c.price is not None and c.volume_mwh > 0 for c in results)
-    assert results[3].price == 62.0  # night: lignite is marginal
+    assert results[3].price == 80.0  # night: wind and lignite sell out, the smelter's bid is marginal
     assert results[18].price == 180.0  # evening peak: the peaker runs

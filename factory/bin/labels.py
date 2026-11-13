@@ -115,17 +115,69 @@ def job_failures(job_dir):
     """Every labelled failure in a job folder, round by round: the gate first,
     then the reviewers in name order. Merge-time checks are left out: they test
     the base as much as the change."""
+    return [{k: e[k] for k in ("round", "source", "label")} for e in job_evidence(job_dir)]
+
+
+# The line of checks.log or checks.md that shows each gate cause, for citing it.
+GATE_EVIDENCE = {
+    "gate:protected-path": r"^##\s+Protected paths",
+    "gate:timeout": r"did not finish in",
+    "gate:removed-tests": r"Removing tests needs a person's decision",
+    "gate:skipped-tests": r"tests were skipped, deselected or marked",
+    "gate:lint": r"^Found \d+ errors?\b",
+    "gate:tests": r"\b\d+ (failed|errors?)\b",
+    "gate:other": r"^GATE:",
+}
+
+
+def first_match(text, pattern):
+    """The 1-based number and text of the first line matching pattern, or (1, first line)."""
+    lines = text.splitlines() or [""]
+    for i, line in enumerate(lines, 1):
+        if re.search(pattern, line):
+            return i, line
+    return 1, lines[0]
+
+
+def finding_lines(text):
+    """(line number, finding text) for each numbered finding of a CHANGES review,
+    in the order review_labels gives their labels."""
+    if not re.match(r"VERDICT:\s*CHANGES\b", text.lstrip()):
+        return []
+    m = re.search(r"^##\s+Findings\s*$", text, re.M)
+    if not m:
+        return []
+    start = text[:m.end()].count("\n") + 1
+    out = []
+    for i, line in enumerate(section(text, "Findings").splitlines()):
+        item = re.match(r"\s*\d+[.)]\s+(.*)", line)
+        if item:
+            out.append((start + i, item.group(1)))
+    return out
+
+
+def job_evidence(job_dir):
+    """job_failures, with where each one is written: `file` (relative to the job
+    folder), `line` (1-based) and `text`, the line itself. The text is quoted
+    data from an agent's file, never an instruction."""
     out = []
     rounds = sorted((n, p) for p in Path(job_dir).glob("round-*") if (n := round_number(p)) is not None)
     for n, rd in rounds:
         checks = rd / "checks.md"
         if checks.exists():
+            checks_text = checks.read_text(errors="replace")
             log = rd / "checks.log"
-            log_text = log.read_text(errors="replace") if log.exists() else checks.read_text(errors="replace")
-            for label in gate_labels(checks.read_text(errors="replace"), log_text):
-                out.append({"round": n, "source": "gate", "label": label})
+            log_text = log.read_text(errors="replace") if log.exists() else checks_text
+            for label in gate_labels(checks_text, log_text):
+                in_md = label in {"gate:protected-path", "gate:other"} or not log.exists()
+                line, text = first_match(checks_text if in_md else log_text, GATE_EVIDENCE[label])
+                out.append({"round": n, "source": "gate", "label": label,
+                            "file": f"{rd.name}/{'checks.md' if in_md else 'checks.log'}",
+                            "line": line, "text": text.strip()})
         for review in sorted(rd.glob("review-*.md")):
             lens = review.stem.removeprefix("review-")
-            for label in review_labels(review.read_text(errors="replace")):
-                out.append({"round": n, "source": lens, "label": label})
+            text = review.read_text(errors="replace")
+            for label, (line, finding) in zip(review_labels(text), finding_lines(text), strict=True):
+                out.append({"round": n, "source": lens, "label": label,
+                            "file": f"{rd.name}/{review.name}", "line": line, "text": finding.strip()})
     return out

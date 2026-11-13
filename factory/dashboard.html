@@ -22,6 +22,18 @@
     --human: #ff5555;
     --merged: #bd93f9;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --scrim: rgba(5, 6, 10, .55);
+    color-scheme: dark;
+  }
+  /* A lit room and a projector want dark text on a light ground. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f8; --panel: #ffffff; --card: #ffffff; --card-hover: #eef0f5; --line: #d3d7e0; --rule: #8a90a3;
+      --text: #1a1c23; --muted: #4c5266; --faint: #646a7f;
+      --active: #0a6b94; --pass: #14753a; --changes: #8f5300; --human: #c12727; --merged: #6739c0;
+      --scrim: rgba(40, 44, 60, .35);
+      color-scheme: light;
+    }
   }
   * { box-sizing: border-box; }
   /* Type is in rem so presentation mode can scale it in one place. */
@@ -73,6 +85,8 @@
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
+
+  .replay { color: var(--changes); }
 
   /* Board */
   .board {
@@ -206,7 +220,7 @@
 
   /* Drawer */
   .scrim {
-    position: fixed; inset: 0; background: rgba(5, 6, 10, .55);
+    position: fixed; inset: 0; background: var(--scrim);
     opacity: 0; pointer-events: none; transition: opacity .2s;
   }
   .drawer {
@@ -280,6 +294,7 @@
   .verdict.stop { color: var(--human); background: color-mix(in srgb, var(--human) 16%, transparent); }
   .note { color: var(--faint); font-size: .8125rem; }
   .md .summary {
+    display: block;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 12px 16px 4px; margin: 0 0 22px;
   }
@@ -377,6 +392,12 @@
 
 <script>
 const POLL_MS = 2000
+// `fx demo` plays a saved run into replay/ and opens this page with ?dir=replay.
+const REPLAY = new URLSearchParams(location.search).get('dir') === 'replay'
+const JOBS = REPLAY ? 'replay/' : 'jobs/'
+// A replay runs faster than the run it shows, so it brings its own clock.
+let clock = null
+const nowMs = () => clock ? Date.parse(clock.now) : Date.now()
 const COLUMNS = [
   { label: 'Intake', who: 'intake · fable', stages: ['intake', 'needs-info'] },
   { label: 'Spec', who: 'spec-writer · opus', stages: ['spec'] },
@@ -423,7 +444,7 @@ function verdictOf(line) {
 async function roundVerdicts(job, n) {
   const key = `${job.id}/${n}`
   if (roundCache.has(key)) return roundCache.get(key)
-  const dir = `jobs/${job.id}/round-${n}/`
+  const dir = `${JOBS}${job.id}/round-${n}/`
   const v = { gate: verdictOf(await fetchFirst(dir + 'checks.md')), reviews: {} }
   if (v.gate === 'PASS') {
     await Promise.all(Object.keys(job.agents?.reviewers || {}).map(async (r) => {
@@ -457,7 +478,7 @@ function roundRow(job, n, v) {
 }
 
 function elapsed(job) {
-  const end = job.ended ? new Date(job.ended) : new Date()
+  const end = job.ended ? new Date(job.ended) : new Date(nowMs())
   const min = Math.max(0, Math.floor((end - new Date(job.started)) / 60000))
   return min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m` : `${min}m`
 }
@@ -477,7 +498,7 @@ function links(job) {
 // running job usually means its agent is still working, or has died.
 function quiet(job) {
   if (!job.updated) return ''
-  const min = Math.floor((Date.now() - new Date(job.updated)) / 60000)
+  const min = Math.floor((nowMs() - new Date(job.updated)) / 60000)
   return min >= 10 ? `<span title="no script has touched this job for ${min} minutes">quiet ${min}m</span>` : ''
 }
 
@@ -517,6 +538,8 @@ function card(job, rounds) {
     </article>`
 }
 
+// ---- Waiting for you -----------------------------------------------------
+
 // ---- Summary -------------------------------------------------------------
 
 const FINISHED = new Set(['merged', 'rejected'])
@@ -530,7 +553,7 @@ let previous = { at: 0, value: null }
 async function stageTimes(job) {
   if (stageCache.has(job.id)) return stageCache.get(job.id)
   let text
-  try { text = await fetchText(`jobs/${job.id}/events.jsonl`) } catch {
+  try { text = await fetchText(`${JOBS}${job.id}/events.jsonl`) } catch {
     stageCache.set(job.id, null) // a job from before the event log existed: don't ask again
     return null
   }
@@ -695,11 +718,18 @@ async function render() {
 async function poll() {
   const status = $('status')
   try {
+    if (REPLAY) {
+      const next = JSON.parse(await fetchText(JOBS + 'clock.json'))
+      if (clock && clock.run !== next.run) return location.reload() // a new replay started: forget this one
+      clock = next
+    }
     jobs = await loadJobs()
     await render()
     if (openJobId) await refreshDrawer()
     status.className = 'status'
-    status.innerHTML = `<span class="dot"></span>jobs/ · ${new Date().toLocaleTimeString()}`
+    status.innerHTML = REPLAY
+      ? `<span class="dot"></span><span class="replay">replay of a saved run, ${clock.done ? 'finished' : 'playing'}</span> · ${new Date(nowMs()).toLocaleTimeString()}`
+      : `<span class="dot"></span>jobs/ · ${new Date().toLocaleTimeString()}`
   } catch (err) {
     status.className = 'status error'
     status.innerHTML = `<span class="dot"></span>${esc(err.message)}`
@@ -709,7 +739,7 @@ async function poll() {
 // factory/bin/job writes each jobs/<id>/job.json.
 async function loadJobs() {
   let listing
-  try { listing = await fetchText('jobs/') } catch (err) {
+  try { listing = await fetchText(JOBS) } catch (err) {
     if (err.status === 404) return []  // no job yet: the folder appears with the first one
     throw new Error('the dashboard server is not answering. Start it again with ./fx up')
   }
@@ -722,7 +752,7 @@ async function loadJobs() {
   // A folder whose job.json is missing or half-written is skipped for this poll, as
   // factory/bin/job skips it; one such folder must not stop the whole board.
   const loaded = await Promise.all(ids.map(async (id) => {
-    try { return JSON.parse(await fetchText(`jobs/${id}/job.json`)) } catch (err) {
+    try { return JSON.parse(await fetchText(`${JOBS}${id}/job.json`)) } catch (err) {
       if (err.status === undefined && !(err instanceof SyntaxError)) throw err  // the server went away
       return null
     }
@@ -787,7 +817,7 @@ function moves(job) {
   }
   if (job.stage === 'needs-info') {
     return { why: 'The factory asked the author a question. See intake.md below.', list: [
-      [`factory/bin/job answer ${id}`, 'Answer it. Your words go on the issue (type them, then Ctrl-D).'],
+      [`./fx answer ${id}`, 'Answer it. Write your answer after the command; it is posted on the issue. Then ./fx run.'],
       [`./fx reject ${id}`, 'Drop it. Your reason is posted on the issue.'],
     ] }
   }
@@ -876,7 +906,7 @@ async function refreshDrawer(force = false) {
     $('d-moves').hidden = !m
   }
 
-  const base = `jobs/${job.id}/`
+  const base = `${JOBS}${job.id}/`
   const state = `${job.id}|${job.stage}|${job.round}|${job.updated}`
   const moved = force || state !== drawerState
   if (moved) drawerFiles = sortFiles(await listFiles(base))

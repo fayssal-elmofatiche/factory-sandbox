@@ -64,6 +64,7 @@ class Sandbox:
         config = self.repo / "factory" / "config.json"
         data = json.loads(config.read_text())
         data["tracker"] = "files"
+        data["concurrency"], data["max_cost_usd"] = 3, None  # the tests' own settings, not the demo's
         config.write_text(json.dumps(data, indent=2))
         sh(["git", "init", "-q", "--bare", str(self.origin)], tmp)
         sh(["git", "-C", str(self.origin), "symbolic-ref", "HEAD", "refs/heads/main"], tmp)
@@ -647,8 +648,8 @@ def escalated(sb):
 
 def test_a_person_approves_an_escalated_job_and_the_factory_merges_it(sb):
     job_id = escalated(sb)
-    assert f"job approve {job_id}" in sb.job("queue").stdout
-    assert f"factory/bin/job approve {job_id}" in sb.job("show", job_id).stdout
+    assert f"./fx approve {job_id}" in sb.job("queue").stdout
+    assert f"./fx approve {job_id}" in sb.job("show", job_id).stdout
     sb.move_base()
     sb.job("approve", job_id)
     s = sb.state(job_id)
@@ -905,7 +906,7 @@ def test_show_prints_the_decision_and_what_to_do(sb):
     sb.job("park", job_id, stdin="looks off")
     out = sb.job("show", job_id).stdout
     assert "decision.md: ESCALATE" in out and "looks off" in out
-    assert f"factory/bin/job feedback {job_id}" in out and "dayahead/seed.py" in out
+    assert f"./fx feedback {job_id}" in out and "dayahead/seed.py" in out
 
 
 def test_show_prints_the_builders_summary_and_risk(sb):
