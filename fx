@@ -679,9 +679,13 @@ def local_origin():
     url = res.stdout.strip()
     if res.returncode != 0 or re.match(r"^(https?://|ssh://|git@|git://)", url) or not Path(url).exists():
         return None
-    if sh("git", "-C", url, "rev-parse", "--is-bare-repository").stdout.strip() != "true":
-        return None
-    return url
+    return url if is_bare(url) else None
+
+
+def is_bare(path):
+    """Whether path is a bare repository. --git-dir names it outright, so this works where
+    safe.bareRepository=explicit makes git refuse to find one on its own (git -C path)."""
+    return sh("git", f"--git-dir={path}", "rev-parse", "--is-bare-repository").stdout.strip() == "true"
 
 
 def is_set_up():
@@ -704,6 +708,9 @@ def cmd_setup(quiet=False):
             if sh("git", "config", key).returncode != 0:
                 sh("git", "config", key, value, check=True)
         bare = REPO.parent / f"{REPO.name}.git"
+        # Check before touching any remote, so a refusal leaves the checkout as it was.
+        if bare.exists() and not is_bare(bare):
+            die(f"{bare} exists and is not a bare repository; move it away and run ./fx setup again")
         old = sh("git", "remote", "get-url", "origin")
         if old.returncode == 0:
             # Keep the place this checkout came from as `upstream`, for course updates.
@@ -715,12 +722,9 @@ def cmd_setup(quiet=False):
             else:
                 sh("git", "remote", "rename", "origin", "upstream", check=True)
                 done.append(f"upstream    {old.stdout.strip()} (where this checkout came from)")
-        if bare.exists():
-            if sh("git", "-C", str(bare), "rev-parse", "--is-bare-repository").stdout.strip() != "true":
-                die(f"{bare} exists and is not a bare repository; move it away and run ./fx setup again")
-        else:
+        if not bare.exists():
             sh("git", "init", "--quiet", "--bare", str(bare), check=True)
-            sh("git", "-C", str(bare), "symbolic-ref", "HEAD", f"refs/heads/{base}", check=True)
+            sh("git", f"--git-dir={bare}", "symbolic-ref", "HEAD", f"refs/heads/{base}", check=True)
         sh("git", "remote", "add", "origin", bare.as_posix(), check=True)
         sh("git", "push", "--quiet", "origin", f"HEAD:refs/heads/{base}", check=True)
         sh("git", "fetch", "--quiet", "origin", check=True)

@@ -362,6 +362,26 @@ def test_setup_makes_the_clone_its_own_sandbox(tmp_path):
     assert "Starting point" in fx(clone, "baseline").stdout  # fx reset and baseline accept it
 
 
+def test_setup_works_where_git_finds_no_bare_repository_on_its_own(tmp_path, monkeypatch):
+    # Some machines and terminals run git with safe.bareRepository=explicit; git -C <bare> fails there.
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'safe.bareRepository=explicit'")
+    clone = fresh_clone(tmp_path)
+    fx(clone, "setup")
+    origin = run(["git", "remote", "get-url", "origin"], cwd=clone).stdout.strip()
+    assert Path(origin).resolve() == (tmp_path / "clone.git").resolve()
+    assert "Already set up" in fx(clone, "setup").stdout  # and it recognises its own origin again
+
+
+def test_setup_that_refuses_leaves_the_remotes_as_they_were(tmp_path):
+    clone = fresh_clone(tmp_path)
+    (tmp_path / "clone.git").mkdir()  # in the way, and not a bare repository
+    came_from = run(["git", "remote", "get-url", "origin"], cwd=clone).stdout.strip()
+    res = fx(clone, "setup", check=False)
+    assert res.returncode != 0 and "not a bare repository" in res.stderr
+    assert run(["git", "remote", "get-url", "origin"], cwd=clone).stdout.strip() == came_from
+    assert run(["git", "remote"], cwd=clone).stdout.split() == ["origin"]
+
+
 def test_doctor_reports_the_setup_and_changes_nothing(tmp_path):
     clone = fresh_clone(tmp_path)
     before = run(["git", "remote", "-v"], cwd=clone).stdout
