@@ -589,6 +589,24 @@ def test_reset_keeps_a_new_setup_file_and_keeps_a_deleted_one_deleted(sandbox):
     assert run(["git", "status", "--porcelain"], cwd=sandbox).stdout.strip() == ""
 
 
+def test_reset_keeps_a_changed_setup_file_in_a_folder_git_ignores(sandbox):
+    # A repository that ignores .claude/skills/ but tracks the factory's skill in it.
+    with open(sandbox / ".git" / "info" / "exclude", "a", encoding="utf-8") as f:
+        f.write(".claude/skills/\n")
+    skill = sandbox / ".claude" / "skills" / "factory" / "SKILL.md"
+    run(["git", "ls-files", "--error-unmatch", ".claude/skills/factory/SKILL.md"], cwd=sandbox)
+    with open(skill, "a", encoding="utf-8", newline="\n") as f:
+        f.write("\nA setup change.\n")
+    stray = skill.parent / "scratch.md"  # ignored and untracked: not part of the setup
+    stray.write_text("mine\n")
+    merge_a_job(sandbox)
+    fx(sandbox, "reset", "--yes")
+    assert "A setup change." in skill.read_text(encoding="utf-8")
+    tracked = run(["git", "ls-files", ".claude/skills"], cwd=sandbox).stdout
+    assert "SKILL.md" in tracked and "scratch.md" not in tracked
+    assert run(["git", "status", "--porcelain"], cwd=sandbox).stdout.strip() == ""
+
+
 def test_reset_says_which_new_issue_files_it_deletes(sandbox):
     run([str(sandbox / "factory" / "bin" / "job"), "new-issue", "Mine"], cwd=sandbox, stdin="body")
     out = fx(sandbox, "reset", check=False, stdin="no\n").stdout
