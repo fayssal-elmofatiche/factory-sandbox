@@ -863,8 +863,12 @@ def cmd_reset(args):
         # which would sweep in whatever else lies in .claude.
         gone = sh("git", "ls-files", "-z", "--deleted", "--", *SETUP, check=True).stdout.split("\0")
         paths = sorted({*setup_files(), *(rel for rel in gone if rel and not rel.startswith(NOT_SETUP))})
+        # -f: a repository may ignore a folder that holds tracked setup files (one that ignores
+        # .claude/* but tracks the factory's skill); without it git add refuses the whole batch.
+        # setup_files() lists only tracked files and new ones git doesn't ignore, so -f adds
+        # nothing ignored that wasn't tracked already.
         for i in range(0, len(paths), 100):  # in batches: a command line has a length limit
-            sh("git", "add", "-A", "--", *paths[i:i + 100], check=True)
+            sh("git", "add", "-A", "-f", "--", *paths[i:i + 100], check=True)
         if sh("git", "diff", "--cached", "--quiet").returncode != 0:
             sh("git", "commit", "-m", "Setup for the next run", check=True)
     shutil.rmtree(aside, ignore_errors=True)
